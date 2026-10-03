@@ -1,0 +1,3 @@
+[submodule "Grasp_ws/src/px4_msgs"]
+	path = Grasp_ws/src/px4_msgs
+	url = https://github.com/PX4/px4_msgs.git

@@ -1,0 +1,8 @@
+# local editor / assistant settings
+.claude/
+.vscode/
+
+__pycache__/
+*.pyc
+
+# Grasp_ws build/runtime outputs are ignored in Grasp_ws/.gitignore

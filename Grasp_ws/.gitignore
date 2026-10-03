@@ -1,0 +1,15 @@
+# colcon build artifacts
+build/
+install/
+log/
+
+# sim output — trial bags + sidecar metadata land here at runtime
+sim_data/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.hypothesis/
+
+# utility script runtime logs
+utility/logs/
