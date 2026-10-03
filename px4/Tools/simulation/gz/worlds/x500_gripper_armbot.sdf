@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Combined x500_gripper + Armbot demo world.
+
+  Unlike PX4's normal gz_x500-style launch (which spawns the vehicle
+  dynamically at runtime via the /world/<world>/create service, see
+  ROMFS/px4fmu_common/init.d-posix/px4-rc.gzsim), this world statically
+  includes BOTH x500_gripper and Armbot plus the rigid attach joint
+  between them at world-load time. PX4 is expected to *attach* to the
+  already-spawned "x500_gripper" model rather than spawn its own — set
+  PX4_GZ_MODEL_NAME=x500_gripper (and PX4_GZ_WORLD=x500_gripper_armbot)
+  before `make px4_sitl gz_x500_gripper` so px4-rc.gzsim takes the
+  "connect to existing model" branch instead of spawning a new one.
+
+  See wayfinder/tickets/001-cross-model-joint-mechanism.md and
+  wayfinder/tickets/002-arm-mount-point.md in the project's planning
+  docs for how the joint mechanism and mount pose below were decided.
+-->
+<sdf version="1.10">
+  <world name="x500_gripper_armbot">
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <scene>
+      <grid>false</grid>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.62 0.76 0.9 1</background>
+      <shadows>true</shadows>
+    </scene>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>1 1</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode/>
+            </friction>
+            <bounce/>
+            <contact/>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>500 500</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+        <pose>0 0 0 0 -0 0</pose>
+        <inertial>
+          <pose>0 0 0 0 -0 0</pose>
+          <mass>1</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>1</iyy>
+            <iyz>0</iyz>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <enable_wind>false</enable_wind>
+      </link>
+      <pose>0 0 0 0 -0 0</pose>
+      <self_collide>false</self_collide>
+    </model>
+    <light name="sunUTC" type="directional">
+      <pose>0 0 500 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0.001 0.625 -0.78</direction>
+      <diffuse>0.904 0.904 0.904 1</diffuse>
+      <specular>0.271 0.271 0.271 1</specular>
+      <attenuation>
+        <range>2000</range>
+        <linear>0</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg> 8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
+
+    <!-- Spawned elevated (rather than resting on legs at z=0 like a normal
+         landed spawn) because Armbot hangs ~0.30 m below its own mount
+         point at rest — starting on the ground would drive the jaw
+         through the ground plane before PX4 ever takes off. This world
+         is for the airborne-grasp demo only; retune/lower once a
+         takeoff-from-ground sequence or a stowed (non-hanging) idle pose
+         is added. x500_base's own merge-include pose offsets base_link
+         by +0.24 m in Z from this include's pose, so base_link ends up
+         at world z = 0.5 + 0.24 = 0.74. -->
+    <include>
+      <uri>model://x500_gripper</uri>
+      <name>x500_gripper</name>
+      <pose>0 0 0.5 0 0 0</pose>
+    </include>
+
+    <!-- Armbot mount decision (wayfinder ticket 002): centered underslung
+         on x500_gripper's belly, 0.04 m below base_link, no pitch so
+         joints-at-zero point the gripper head forward (+X, same as the
+         vehicle's own forward) instead of straight down. Armbot's own
+         base_link has zero local offset from its model root, so this
+         include's pose IS armbot::base_link's world pose:
+         (0, 0, 0.74 - 0.04, 0, 0, 0). <static> is set false in
+         Armbot/model.sdf itself (required for either this attach joint
+         or Armbot's own JointPositionController-driven joints to do
+         anything). -->
+    <include>
+      <uri>model://Armbot</uri>
+      <name>armbot</name>
+      <pose>0 0 0.70 3.14 0 0</pose>
+    </include>
+
+    <!-- Cross-model rigid joint (wayfinder ticket 001): a <joint> as a
+         direct child of <world>, sibling to the two <include>s above,
+         natively joins links across independently-spawned models in
+         gz-sim Harmonic (SDFormat 1.10+, gz-sim8, gz-physics6/dartsim -
+         confirmed via source, see ticket 001). No pose given here: the
+         constraint locks whatever relative transform the two links
+         already have from their include poses above, i.e. it's
+         positioned entirely by the two <include><pose> values, not by
+         this element. If this misbehaves, ticket 001 documents the
+         gz-sim-detachable-joint-system plugin as a fallback. -->
+    <joint name="arm_attach_joint" type="fixed">
+      <parent>x500_gripper::base_link</parent>
+      <child>armbot::base_link</child>
+    </joint>
+
+    <!-- ===== Scenery (Gazebo Fuel assets) =====
+         Two Fuel assets, purely cosmetic, laid out as a fenced test range:
+           * Jersey Barrier (static, 4.07 m long) - 3 per side, square
+             perimeter at +/-7 m around the vehicle.
+           * Construction Cone (forced static) - marks a 3.5 x 3.5 m
+             takeoff/grasp zone centred on the vehicle.
+         Everything stays >= 1.75 m from the origin so nothing intersects
+         the vehicle/arm during takeoff. Pre-fetch with
+         Grasp_ws/utility/fetch_assets.sh so world load is not stalled by
+         downloads (px4-rc.gzsim only waits ~30 s for the world). -->
+
+    <!-- North side (y = +7) -->
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_n1</name><pose>-4.1 7 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_n2</name><pose>0 7 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_n3</name><pose>4.1 7 0 0 0 0</pose></include>
+    <!-- South side (y = -7) -->
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_s1</name><pose>-4.1 -7 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_s2</name><pose>0 -7 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_s3</name><pose>4.1 -7 0 0 0 0</pose></include>
+    <!-- East side (x = +7) -->
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_e1</name><pose>7 -4.1 0 0 0 1.5708</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_e2</name><pose>7 0 0 0 0 1.5708</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_e3</name><pose>7 4.1 0 0 0 1.5708</pose></include>
+    <!-- West side (x = -7) -->
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_w1</name><pose>-7 -4.1 0 0 0 1.5708</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_w2</name><pose>-7 0 0 0 0 1.5708</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier</uri><name>barrier_w3</name><pose>-7 4.1 0 0 0 1.5708</pose></include>
+
+    <!-- ===== Grasp experiment station =====
+         Fuel "Table" (static, 1.5 x 0.8 m top, top surface at z = 1.015)
+         3 m in front of the takeoff point, outside the cone zone. The test
+         cylinder (Grasp_ws/model/cylinder, r 25 mm, L 120 mm) lies on it
+         with its axis along world Y (roll = pi/2), i.e. across the
+         vehicle's forward axis, so the gripper fingers pinch along X and
+         an off-centre grasp produces a roll moment.
+         Keep these numbers in sync with Grasp_ws/src/px4_gripper_missions/
+         config/experiment.yaml (table/cylinder poses). The cylinder model
+         is found through GZ_SIM_RESOURCE_PATH, which launch_sim.sh extends
+         with Grasp_ws/model. -->
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <name>grasp_table</name>
+      <pose>3.0 0 0 0 0 0</pose>
+    </include>
+    <include>
+      <uri>model://cylinder</uri>
+      <name>grasp_cylinder</name>
+      <pose>3.0 0 1.040 1.5708 0 0</pose>
+    </include>
+    <!-- Jig (the protocol's "same start state"): without it the cylinder
+         rolls freely on the table - the simulator has no rolling
+         resistance. Two 4 mm rails 24 mm apart along the cylinder axis
+         cradle it (contact ~3 mm above the table, well below its equator),
+         inside the finger paths; open fingertips clear the rails by ~2 mm
+         at grasp height. One jig at the start pose, one at the E park pose. -->
+    <model name="grasp_jig">
+      <static>true</static>
+      <pose>3.0 0 1.015 0 0 0</pose>
+      <link name="link">
+        <collision name="rail_e"><pose>0.014 0 0.002 0 0 0</pose>
+          <geometry><box><size>0.004 0.10 0.004</size></box></geometry></collision>
+        <collision name="rail_w"><pose>-0.014 0 0.002 0 0 0</pose>
+          <geometry><box><size>0.004 0.10 0.004</size></box></geometry></collision>
+        <visual name="rail_e"><pose>0.014 0 0.002 0 0 0</pose>
+          <geometry><box><size>0.004 0.10 0.004</size></box></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+        <visual name="rail_w"><pose>-0.014 0 0.002 0 0 0</pose>
+          <geometry><box><size>0.004 0.10 0.004</size></box></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="grasp_jig_park">
+      <static>true</static>
+      <pose>3.45 0.28 1.015 0 0 0</pose>
+      <link name="link">
+        <collision name="rail_e"><pose>0.014 0 0.002 0 0 0</pose>
+          <geometry><box><size>0.004 0.10 0.004</size></box></geometry></collision>
+        <collision name="rail_w"><pose>-0.014 0 0.002 0 0 0</pose>
+          <geometry><box><size>0.004 0.10 0.004</size></box></geometry></collision>
+        <visual name="rail_e"><pose>0.014 0 0.002 0 0 0</pose>
+          <geometry><box><size>0.004 0.10 0.004</size></box></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+        <visual name="rail_w"><pose>-0.014 0 0.002 0 0 0</pose>
+          <geometry><box><size>0.004 0.10 0.004</size></box></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+      </link>
+    </model>
+
+    <!-- Takeoff / grasp zone markers -->
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone</uri><name>cone_ne</name><static>true</static><pose>1.75 1.75 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone</uri><name>cone_nw</name><static>true</static><pose>-1.75 1.75 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone</uri><name>cone_se</name><static>true</static><pose>1.75 -1.75 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone</uri><name>cone_sw</name><static>true</static><pose>-1.75 -1.75 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone</uri><name>cone_n</name><static>true</static><pose>0 1.75 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone</uri><name>cone_s</name><static>true</static><pose>0 -1.75 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone</uri><name>cone_e</name><static>true</static><pose>1.75 0 0 0 0 0</pose></include>
+    <include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone</uri><name>cone_w</name><static>true</static><pose>-1.75 0 0 0 0 0</pose></include>
+  </world>
+</sdf>

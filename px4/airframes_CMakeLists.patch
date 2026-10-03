@@ -1,0 +1,12 @@
+diff --git a/ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt b/ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt
+index ce93573d15..bc789576ef 100644
+--- a/ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt
++++ b/ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt
+@@ -88,6 +88,7 @@ px4_add_romfs_files(
+ 	4019_gz_x500_gimbal
+ 	4020_gz_tiltrotor
+ 	4021_gz_x500_flow
++	4022_gz_x500_gripper
+ 
+ 	5001_xplane_cessna172
+ 	5002_xplane_tb2

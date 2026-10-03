@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<!--
+  Grasp test cylinder for Gazebo Sim (gz).
+  Dynamic, primitive collision, explicit inertia. Spawn it lying horizontally by giving
+  the spawn pose roll = 1.5708 (the cylinder axis is the model's local Z).
+
+  Defaults: r = 25 mm, L = 120 mm, m = 0.15 kg (solid, uniform).
+  Change these to fit your finger span and the mass found in the thrust-detectability test.
+  If you change m, r or L, recompute inertia:
+      Ixx = Iyy = m * (3 r^2 + L^2) / 12
+      Izz       = m * r^2 / 2
+-->
+<sdf version="1.9">
+  <model name="grasp_cylinder">
+    <static>false</static>
+    <link name="link">
+
+      <inertial>
+        <!-- Hidden-CoM scenario (S4): shift the centre of mass along the axis,
+             e.g. <pose>0 0 0.03 0 0 0</pose>. Geometry stays the same, so the object looks identical. -->
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.15</mass>
+        <inertia>
+          <ixx>2.034e-4</ixx> <iyy>2.034e-4</iyy> <izz>4.69e-5</izz>
+          <ixy>0</ixy> <ixz>0</ixz> <iyz>0</iyz>
+        </inertia>
+      </inertial>
+
+      <collision name="collision">
+        <geometry>
+          <cylinder><radius>0.025</radius><length>0.12</length></cylinder>
+        </geometry>
+        <surface>
+          <friction>
+            <!-- Surface factor: e.g. 0.3 (low / "smooth skin") vs 1.0 (high / "rubber skin").
+                 Effective friction also depends on the finger-pad collision's mu. -->
+            <ode><mu>1.0</mu><mu2>1.0</mu2></ode>
+          </friction>
+        </surface>
+      </collision>
+
+      <visual name="visual">
+        <geometry>
+          <cylinder><radius>0.025</radius><length>0.12</length></cylinder>
+        </geometry>
+        <material>
+          <ambient>0.1 0.25 0.8 1</ambient>
+          <diffuse>0.1 0.25 0.8 1</diffuse>
+        </material>
+      </visual>
+
+    </link>
+  </model>
+</sdf>
