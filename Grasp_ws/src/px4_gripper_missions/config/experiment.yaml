@@ -1,0 +1,92 @@
+# Two-scenario grasp experiment (see "Two-Scenario Grasp Experiment" deck):
+#   A  centred grasp      - fails by sliding straight down  -> thrust step
+#   B  off-centre grasp   - fails by tilting/slipping round the fingers at
+#                           1/4 length -> thrust + roll moment
+#   E  empty-gripper control - same motion, cylinder parked out of reach
+# One cylinder, one mass, one surface; only the grasp position changes.
+# The difficulty knob is the grip force per scenario, tuned so 30-60 % of
+# trials fail (use `experiment.sh tune`).
+#
+# All poses are Gazebo world ENU (x east, y north, z up), metres / radians.
+# Keep table/cylinder poses in sync with worlds/x500_gripper_armbot.sdf.
+
+world: x500_gripper_armbot
+models:
+  drone: x500_gripper
+  arm: armbot
+  cylinder: grasp_cylinder
+
+cylinder:
+  # Lying on the table top (z 1.015) with its axis along world Y.
+  start_pose: [3.0, 0.0, 1.040, 1.5708, 0.0, 0.0]
+  # E trials: parked on the same table, well out of the fingers' way.
+  park_pose: [3.45, 0.28, 1.040, 1.5708, 0.0, 0.0]
+  length_m: 0.12
+  axis_world: [0.0, 1.0, 0.0]      # grasp offsets are measured along this
+
+scenarios:
+  # Tuned 2026-10-03 with `experiment.sh tune` (sim_data/*_tuneA, *_tuneB):
+  # A: 1.30-1.39 N all failed (clean slides), >= 1.45 N mostly held; near
+  #    1.5-1.6 N failures turn into "slip then pivot". 1.40 N ~ 50 % fails.
+  # B: 1.8 and 2.2 N always failed (pivot round the fingers), 2.6 N 1/4,
+  #    3-4 N held after rotating 9-22 deg. 2.4 N ~ 50 % fails.
+  # Re-tune after changing the cylinder, pads or friction.
+  A: {grasp_offset_m: 0.0,  grip_force_n: 1.40}
+  B: {grasp_offset_m: 0.03, grip_force_n: 2.40}   # 1/4 of L = 120 mm from centre
+  E: {grasp_offset_m: 0.0,  grip_force_n: 1.40}   # uses A's motion, nothing to grip
+
+# Per-trial variability. Without it the simulator is nearly deterministic
+# and every trial at a given grip force has the same outcome; these stand
+# in for real-world grasp placement and actuator scatter. Logged per trial.
+randomization:
+  seed: 1
+  grip_force_jitter_frac: 0.08     # 1-sigma, fraction of grip_force_n
+  grasp_offset_jitter_m: 0.003     # 1-sigma, along the cylinder axis
+
+protocol:
+  batteries: 30                    # A/B interleaved within every battery
+  trials_per_battery: 10
+  empty_per_battery: 1             # "E about every 10 trials"
+
+motion:
+  cruise_alt_m: 2.4                # drone (model frame) z while transiting
+  approach_clearance_m: 0.12       # grasp point above target before descent
+  grasp_z_offset_m: 0.006          # grasp slightly above the axis: fingertips clear the table
+  transit_speed_mps: 0.6
+  descend_speed_mps: 0.10
+  lift_height_m: 0.40
+  lift_speed_mps: 0.30
+  baseline_s: 1.0                  # recorded hover before descent
+  settle_s: 1.0                    # hover at grasp height before closing
+  close_wait_s: 1.0                # fingers closing, before lift
+  hold_s: 4.0                      # hold at lift height (outcome window)
+  align_tol_m: 0.004
+  align_timeout_s: 40.0
+  heading_ned_rad: 1.5708          # face +x (east): arm forward over the table
+
+arm:
+  stow_pose:  {base_yaw: 0.0, shoulder_pitch: 0.0,   elbow_pitch: 0.0}
+  reach_pose: {base_yaw: 0.0, shoulder_pitch: -1.45, elbow_pitch: -0.12}   # straight down
+
+gripper:
+  open_force_n: -2.0
+  missed_grasp_travel_m: 0.030     # finger closed past this = nothing between the pads
+
+outcome:
+  slip_onset_m: 0.010              # cylinder moved this far relative to the grasp point
+  drop_m: 0.040                    # ... and this far = dropped (trial failed)
+  tilt_fail_deg: 45.0              # axis rotated this far = failed even if still hanging
+  tilt_threshold_deg: 15.0         # tilt change at slip onset: "tilt" vs "slide"
+
+px4:
+  # Emulate a motion-capture lab: Gazebo ground truth is fed to EKF2 as
+  # external vision and GPS/baro fusion is switched off (mocap.py), so the
+  # hover is accurate to millimetres. false = stock GPS estimate (cm wander,
+  # grasps will often miss).
+  mocap: true
+  bin_dir: ~/PX4-Autopilot/build/px4_sitl_default/bin
+  log_dir: ~/PX4-Autopilot/build/px4_sitl_default/rootfs/log
+  sdlog_profile_or: 16             # add "high rate" logging (thrust/torque/motors at full rate)
+  params:
+    NAV_DLL_ACT: 0                 # no GCS needed (headless runs)
+    COM_RCL_EXCEPT: 4              # no RC-loss failsafe in offboard

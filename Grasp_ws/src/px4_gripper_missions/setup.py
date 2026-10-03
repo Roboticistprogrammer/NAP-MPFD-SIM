@@ -45,6 +45,8 @@ setup(
     entry_points={
         'console_scripts': [
             'run_scenario = px4_gripper_missions.run_scenario:main',
+            'run_experiment = px4_gripper_missions.experiment:main',
+            'export_trials = px4_gripper_missions.export_trials:main',
         ],
     },
 )
