@@ -1,0 +1,31 @@
+# SC-03: Repeated-cycle endurance (Scenarios.md)
+# "Same object, N consecutive grasp cycles"
+scenario_id: SC03
+hover_pose:
+  x: 0.0
+  y: 0.0
+  z: -2.0
+  yaw: 0.0
+hold_duration_s: 3.0
+condition_label: normal
+land_at_end: true
+outcome_z_drop_threshold_m: 0.02
+outcome_sample_interval_s: 0.5
+
+approach_pose:
+  base_yaw: 0.0
+  shoulder_pitch: 0.15
+  elbow_pitch: -0.1
+approach_settle_s: 1.0
+lift_delta:
+  shoulder_pitch: -0.2
+  elbow_pitch: 0.1
+lower_settle_s: 1.0
+
+num_cycles: 5
+inter_cycle_pause_s: 2.0
+# false: one bag for the whole trial (all cycles), cycle_index tagged
+# in each cycle's entry within the sidecar metadata.
+# true: one bag per cycle (finer-grained, more files) — for later
+# degradation-trend analysis if per-cycle sensor drift needs isolating.
+bag_per_cycle: false

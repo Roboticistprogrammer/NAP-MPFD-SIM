@@ -1,0 +1,29 @@
+# SC-05: Graduated payload sweep (Scenarios.md)
+# "Same grasp motion across OBJ-A -> OBJ-C in ascending weight order,
+# single session"
+scenario_id: SC05
+hover_pose:
+  x: 0.0
+  y: 0.0
+  z: -2.0
+  yaw: 0.0
+hold_duration_s: 5.0
+condition_label: normal
+land_at_end: true
+outcome_z_drop_threshold_m: 0.02
+outcome_sample_interval_s: 0.5
+
+approach_pose:
+  base_yaw: 0.0
+  shoulder_pitch: 0.15
+  elbow_pitch: -0.1
+approach_settle_s: 1.0
+lift_delta:
+  shoulder_pitch: -0.2
+  elbow_pitch: 0.1
+lower_settle_s: 1.0
+
+# Ascending-mass order — must match objects.yaml's mass_kg ordering.
+# run_scenario.py validates this at load time (see config_loader.py).
+object_sequence: [OBJ-A, OBJ-B, OBJ-C]
+inter_object_pause_s: 2.0

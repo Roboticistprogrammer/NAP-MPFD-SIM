@@ -1,0 +1,77 @@
+# Grasp-target object definitions.
+#
+# PLACEHOLDER, pending wayfinder ticket 003
+# (px4_gazebo_sim_setup/wayfinder/tickets/003-grasp-object-and-choreography.md).
+# Every number below is a starting guess, not a measured/tuned value —
+# Armbot's jaw_link/gripper_base_link collision geometry is an STL mesh
+# (Tools/simulation/gz/models/Armbot/meshes/*.stl), and this config was
+# written without loading those meshes to get a real bounding box, so
+# jaw clearance is unverified. grasp_pose's joint angles are an
+# unverified guess at "reach down a bit further than the hanging rest
+# pose" — they have NOT been tried against a live sim. Tune all of this
+# empirically once ticket 003 resolves; this file is the only place
+# that needs to change when it does — no script/code changes required.
+#
+# world_pose / grasp_pose frames:
+#   - world_pose: where the object spawns, in world coordinates (x y z
+#     roll pitch yaw), independent of the drone — SC-01/02 assume the
+#     drone hovers close enough above this for grasp_pose to reach it.
+#   - grasp_pose: Armbot joint angles (radians) the arm moves to, one
+#     shot, to bring the gripper to the object. Keys match
+#     ArmController's commandable joints (base_yaw, shoulder_pitch,
+#     elbow_pitch) — gripper is commanded separately via
+#     open_position/closed_position, not part of grasp_pose.
+
+active_object: OBJ-A
+
+objects:
+  OBJ-A:
+    description: "Placeholder light payload — small box"
+    shape: box
+    size_m: [0.03, 0.03, 0.03]
+    mass_kg: 0.05
+    friction:
+      mu: 0.8
+      mu2: 0.8
+    world_pose: [0.15, 0.0, 0.05, 0, 0, 0]
+    grasp_pose:
+      base_yaw: 0.0
+      shoulder_pitch: 0.3
+      elbow_pitch: -0.2
+    gripper:
+      open_position: 0.0
+      closed_position: 1.2
+
+  OBJ-B:
+    description: "Placeholder medium payload — SC-05 sweep midpoint"
+    shape: box
+    size_m: [0.035, 0.035, 0.035]
+    mass_kg: 0.10
+    friction:
+      mu: 0.8
+      mu2: 0.8
+    world_pose: [0.15, 0.0, 0.05, 0, 0, 0]
+    grasp_pose:
+      base_yaw: 0.0
+      shoulder_pitch: 0.3
+      elbow_pitch: -0.2
+    gripper:
+      open_position: 0.0
+      closed_position: 1.2
+
+  OBJ-C:
+    description: "Placeholder heavy payload — SC-05 sweep top end"
+    shape: box
+    size_m: [0.04, 0.04, 0.04]
+    mass_kg: 0.15
+    friction:
+      mu: 0.9
+      mu2: 0.9
+    world_pose: [0.15, 0.0, 0.05, 0, 0, 0]
+    grasp_pose:
+      base_yaw: 0.0
+      shoulder_pitch: 0.3
+      elbow_pitch: -0.2
+    gripper:
+      open_position: 0.0
+      closed_position: 1.2

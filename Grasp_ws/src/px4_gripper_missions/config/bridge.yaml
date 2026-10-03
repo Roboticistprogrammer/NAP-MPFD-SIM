@@ -1,0 +1,60 @@
+# ros_gz_bridge topic map for the x500_gripper_armbot world.
+#
+# Assumes PX4 SITL + Gazebo are already running against
+# PX4-Autopilot/Tools/simulation/gz/worlds/x500_gripper_armbot.sdf
+# (per 02_run_sitl_baseline.md's launch flow, extended with
+# PX4_GZ_WORLD=x500_gripper_armbot PX4_GZ_MODEL_NAME=x500_gripper —
+# see wayfinder/MAP.md's "Implemented" section). This file only bridges
+# Gazebo-native topics the flight side doesn't already expose over
+# /fmu/*; it does not duplicate or relaunch the sim itself.
+#
+# Joint names match Armbot/model.sdf's JointPositionController plugins
+# exactly (wrist_joint is fixed, not commandable, so it's excluded).
+# ROS-side names are shortened (armbot/joint/<short>/cmd_pos) purely for
+# readability in `ros2 topic list` / scripts; gz_topic_name is what
+# actually matters for wiring.
+
+- ros_topic_name: "armbot/joint/base_yaw/cmd_pos"
+  gz_topic_name: "/model/armbot/joint/base_yaw_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "armbot/joint/shoulder_pitch/cmd_pos"
+  gz_topic_name: "/model/armbot/joint/shoulder_pitch_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "armbot/joint/elbow_pitch/cmd_pos"
+  gz_topic_name: "/model/armbot/joint/elbow_pitch_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "armbot/joint/gripper/cmd_pos"
+  gz_topic_name: "/model/armbot/joint/gripper_joint/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+# Armbot's own JointStatePublisher plugin (model.sdf) — GZ_TO_ROS so
+# ArmController/tests can eventually confirm commanded vs. actual joint
+# position instead of the current fixed-dwell "settle_s" placeholder
+# (see arm_controller.py's set_pose docstring).
+- ros_topic_name: "armbot/joint_states"
+  gz_topic_name: "/model/armbot/joint_states"
+  ros_type_name: "sensor_msgs/msg/JointState"
+  gz_type_name: "gz.msgs.Model"
+  direction: GZ_TO_ROS
+
+# World-wide entity pose feed (SceneBroadcaster). Carries every entity's
+# pose, including whichever grasp-target object is currently spawned —
+# GraspOutcomeMonitor filters this by object model name rather than
+# bridging a narrower per-object topic, since the object name/count
+# varies by scenario (SC-05 swaps objects mid-session).
+- ros_topic_name: "world/x500_gripper_armbot/pose_info"
+  gz_topic_name: "/world/x500_gripper_armbot/pose/info"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS

@@ -1,0 +1,19 @@
+# SC-01: Static grasp-and-hold (Scenarios.md)
+# "Arm stationary, close on object, hold N seconds, release"
+#
+# hover_pose is in PX4's local NED frame (x north, y east, z DOWN — so
+# more negative z = higher). -2.0 is an unverified placeholder giving
+# the hanging arm (~0.30 m reach) clearance below the airframe; retune
+# once flown for real (see wayfinder/MAP.md's "not yet specified" note
+# on PX4 tuning for the arm's added mass).
+scenario_id: SC01
+hover_pose:
+  x: 0.0
+  y: 0.0
+  z: -2.0
+  yaw: 0.0
+hold_duration_s: 5.0
+condition_label: normal
+land_at_end: true
+outcome_z_drop_threshold_m: 0.02
+outcome_sample_interval_s: 0.5
