@@ -311,3 +311,22 @@ def test_claw_uses_jaw_angle_commands_with_additive_jitter():
 
 def test_trial_columns_carry_the_pad_forces():
     assert TRIAL_COLUMNS[-2:] == ['fsr_l', 'fsr_r']
+
+
+def test_csv_window_bins_the_pad_forces_and_skips_old_sessions(tmp_path):
+    import csv as _csv
+    import numpy as np
+    from px4_gripper_missions.windows import FSR_COLUMNS, csv_window
+    p = tmp_path / 't.csv'
+    with open(p, 'w', newline='') as f:
+        w = _csv.writer(f); w.writerow(['t_sim', 'phase', 'fsr_l', 'fsr_r'])
+        for k in range(200):
+            t = 10.0 + 0.02 * k
+            w.writerow([t, 'x', 1.0 if t < 12.0 else 0.0, 2.0])
+    win = csv_window(str(p), FSR_COLUMNS, 11.5, 50, 50.0)
+    assert win.shape == (50, 2)
+    assert np.allclose(win[:24, 0], 1.0) and np.allclose(win[26:, 0], 0.0)
+    assert np.allclose(win[:, 1], 2.0)
+    q = tmp_path / 'old.csv'
+    q.write_text('t_sim,phase,finger_l\n10.0,x,0.01\n')
+    assert csv_window(str(q), FSR_COLUMNS, 10.0, 5, 50.0) is None

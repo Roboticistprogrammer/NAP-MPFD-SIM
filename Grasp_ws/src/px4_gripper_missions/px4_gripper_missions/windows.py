@@ -116,6 +116,22 @@ def _num(x: str, default: float = float('nan')) -> float:
         return default
 
 
+FSR_COLUMNS = ('fsr_l', 'fsr_r')     # servo claw pad forces in the trial CSVs [N] (Tier-2 group)
+
+
+def csv_window(csv_path: str, columns, t_start: float, n: int, rate_hz: float) -> Optional[np.ndarray]:
+    """(n, len(columns)) window from a trial CSV (sim time t_sim), same 50 Hz binning as
+    the ULog channels. None if the CSV lacks the columns (force_fingers sessions)."""
+    with open(csv_path) as f:
+        rows = list(csv.DictReader(f))
+    if not rows or any(c not in rows[0] for c in columns):
+        return None
+    t = np.array([float(r['t_sim']) for r in rows])
+    dt = 1.0 / rate_hz
+    return np.column_stack([bin_average(t, np.array([float(r[c]) for r in rows]), t_start, n, dt)
+                            for c in columns])
+
+
 def build_windows(session_dir: str, out_dir: Optional[str] = None, spec_path: Optional[str] = None,
                   sl_s: float = 1.5, rate_hz: float = 50.0, baseline_s: float = 0.5,
                   ulog_path: Optional[str] = None) -> dict:
@@ -144,6 +160,7 @@ def build_windows(session_dir: str, out_dir: Optional[str] = None, spec_path: Op
 
     kept: List[dict] = []
     x_sl, x_cg, b_sl, b_cg = [], [], [], []
+    f_sl, f_cg = [], []          # pad forces (servo claw), absolute values, not baseline-subtracted
     dropped: List[dict] = []
     for tr in trials:
         tid = f"{session['session']}_t{int(tr['index']):04d}"
@@ -160,6 +177,12 @@ def build_windows(session_dir: str, out_dir: Optional[str] = None, spec_path: Op
         if any(np.isnan(a).any() for a in (sl, cg, base_sl, base_cg)):
             dropped.append(dict(trial_id=tid, reason='NaN in window (ULog gap?)'))
             continue
+        fs = fc = None
+        if tr.get('csv'):
+            path = os.path.join(session_dir, tr['csv'])
+            fs = csv_window(path, FSR_COLUMNS, t0, n_sl, rate_hz)
+            fc = csv_window(path, FSR_COLUMNS, t_close, n_cg, rate_hz)
+        f_sl.append(fs); f_cg.append(fc)
         x_sl.append(sl)
         x_cg.append(cg)
         b_sl.append(base_sl.mean(axis=0))
@@ -169,6 +192,7 @@ def build_windows(session_dir: str, out_dir: Optional[str] = None, spec_path: Op
             battery=int(tr['battery']), scenario=tr['scenario'],
             y_success=int(tr['y_success']),
             y_stable=int(tr['y_stable']) if tr['y_stable'] != '' else pd.NA,
+            stable_level=int(tr['stable_level']) if tr.get('stable_level', '') != '' else pd.NA,
             failure_mode=tr['failure_mode'], t_onset_s=_num(tr['t_onset_s']),
             t_drop_s=_num(tr['t_drop_s']), shake_failure_mode=tr['shake_failure_mode'],
             shake_t_drop_s=_num(tr['shake_t_drop_s']),
@@ -185,10 +209,15 @@ def build_windows(session_dir: str, out_dir: Optional[str] = None, spec_path: Op
         os.path.join(out_dir, 'windows.npz'),
         X_sl=np.array(x_sl).reshape(-1, n_sl, c), X_cg=np.array(x_cg).reshape(-1, n_cg, c),
         base_sl=np.array(b_sl).reshape(-1, c), base_cg=np.array(b_cg).reshape(-1, c),
-        trial_id=np.array([k['trial_id'] for k in kept]), channels=np.array(names))
+        trial_id=np.array([k['trial_id'] for k in kept]), channels=np.array(names),
+        **({'X_fsr_sl': np.array(f_sl).reshape(-1, n_sl, len(FSR_COLUMNS)),
+            'X_fsr_cg': np.array(f_cg).reshape(-1, n_cg, len(FSR_COLUMNS)),
+            'fsr_channels': np.array(FSR_COLUMNS)}
+           if f_sl and all(a is not None for a in f_sl + f_cg) else {}))
     labels = pd.DataFrame(kept)
     if len(labels):
         labels['y_stable'] = labels['y_stable'].astype('Int64')
+        labels['stable_level'] = labels['stable_level'].astype('Int64')
     labels.to_parquet(os.path.join(out_dir, 'labels.parquet'), index=False)
     meta = dict(
         session=session['session'], variant=session.get('variant'),
