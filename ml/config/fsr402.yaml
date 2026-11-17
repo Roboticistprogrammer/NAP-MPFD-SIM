@@ -1,0 +1,33 @@
+# Synthetic fingertip force sensor (Interlink FSR 402) read by an Arduino Nano at 50 Hz.
+# Source: Interlink Electronics, "FSR 400 Series Data Sheet", P/N PDS-10004-C ("datasheet" below).
+# Values marked ASSUMPTION are not in the datasheet. The datasheet notes that its figures are
+# reference only and depend on the mechanics and measurement electronics.
+
+force_curve:
+  # R_FSR = r_at_1n * (F / 1 N) ** (-alpha) above the actuation force.
+  # Read by eye from the datasheet's resistance-vs-force figure and its 10 kOhm divider curve
+  # (p. 3): about 20-25 kOhm at 100 g and 3.5-5 kOhm at 1000 g. Approximate, +-30 %.
+  r_at_1n_ohm: 22000.0
+  alpha: 0.8
+  actuation_force_n: 0.2        # datasheet: actuation force ~0.2 N min
+  max_force_n: 20.0             # datasheet: force sensitivity range ~0.2-20 N (clipped above)
+  r_open_ohm: 1.0e+7            # datasheet: non-actuated resistance > 10 MOhm
+
+divider:
+  # Datasheet voltage divider: V_out = R_M * V+ / (R_M + R_FSR), V+ = 5 V in its examples.
+  v_supply: 5.0
+  r_m_ohm: 10000.0              # ASSUMPTION: 10 kOhm, one of the datasheet's example R_M values
+
+adc:
+  bits: 10                      # Arduino Nano (ATmega328P) ADC
+  noise_lsb: 1.0                # ASSUMPTION: 1 LSB (1 sigma) read noise
+
+errors:
+  # Datasheet figures are one standard deviation / mean, measured at 1000 g.
+  repeat_single_part: 0.02      # datasheet: force repeatability single part +-2 %  (per actuation = per trial)
+  part_to_part: 0.06            # datasheet: part to part +-6 % (single batch); one draw per sensor, fixed
+  per_trial_gain: 0.0           # swept 0, 0.05, 0.10, 0.25, 0.50: placement and contact coupling
+                                # (ASSUMPTION: not in the datasheet; it is the main unknown)
+  drift_per_decade: 0.05        # datasheet: long-term drift < 5 % per log10(time) (1 kg, 35 days);
+                                # ASSUMPTION: applied from first contact, log10(1 + t / 1 s)
+  # Hysteresis (datasheet +10 %) is not modelled: in Stage 1 the force only rises, then stays.
