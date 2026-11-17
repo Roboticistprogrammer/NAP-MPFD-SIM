@@ -73,6 +73,19 @@ A trial takes about 20 s, so the full protocol (300 trials) takes roughly
 A protocol battery has 10 trials: A and B interleaved (5/4, then 4/5) plus
 one E, shuffled with a fixed seed.
 
+### Small-lift variant (branch `feature/small-lift-protocol`)
+
+`protocol.variant: small_lift` (or `--variant small_lift`) replaces step 5 by a
+0.10 m / 1.5 s minimum-jerk small lift (t0 = its start), then a minimum-jerk
+rise to +1.0 m, a 4 s hold, and, if the cylinder is still held, a lateral
+shake of ±0.3 m along the cylinder axis. `trials.csv` gains `t_close`,
+`t_sl_end`, `t_shake`, `y_success`, `y_stable`. See `08_small_lift_plan.md`.
+
+```bash
+./experiment.sh protocol --batteries 1 --empty 0 --variant small_lift   # 10 trials, A and B only
+./experiment.sh dataset ../sim_data/<session>                           # dataset/windows.npz + labels.parquet
+```
+
 ## Outputs
 
 `Grasp_ws/sim_data/<YYYYmmdd_HHMMSS>_<mode>/`
