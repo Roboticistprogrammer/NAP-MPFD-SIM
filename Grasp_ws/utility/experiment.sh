@@ -9,8 +9,10 @@
 #            [--trials N]      30-60 % failures, put it in experiment.yaml
 #   protocol [--batteries N]   batteries of 10: A/B interleaved + 1 E each
 #   export <session dir>       slice the PX4 ULog per trial, merge with ground truth
+#   dataset <session dir>      small_lift sessions: 50 Hz SL/CG windows + labels (dataset/)
 #   relabel <session dir>      recompute outcomes with the current thresholds
 # options: --grip A=0.8 B=2.0 (single/protocol overrides)  --seed N
+#          --variant legacy|small_lift (default: protocol.variant)  --empty N (E per battery)
 #          --no-land  --config FILE  --debug (alignment trace)
 #
 # The sim must be running (./launch_sim.sh, --headless recommended for long
@@ -39,6 +41,11 @@ if [ "$cmd" = "export" ]; then
   exec python3 -m px4_gripper_missions.export_trials "$@"
 fi
 
+if [ "$cmd" = "dataset" ]; then
+  [ -n "${1:-}" ] || die "usage: $0 dataset <session dir>"
+  exec python3 -m px4_gripper_missions.windows "$@"
+fi
+
 global=(--config "$PKG_SRC/config/experiment.yaml" --output-dir "$WS_DIR/sim_data")
 sub=()
 case "$cmd" in
@@ -48,7 +55,7 @@ case "$cmd" in
     sub=(--scenario "$scen") ;;
   protocol) ;;
   -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
-  *) die "unknown command '$cmd' (single | tune | protocol | export | relabel)" ;;
+  *) die "unknown command '$cmd' (single | tune | protocol | export | dataset | relabel)" ;;
 esac
 
 while [ $# -gt 0 ]; do
@@ -56,9 +63,9 @@ while [ $# -gt 0 ]; do
     --grip) shift; grip=()
             while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do grip+=("$1"); shift; done
             global+=(--grip "${grip[@]}"); continue ;;
-    --seed|--config) global+=("$1" "$2"); shift ;;
+    --seed|--config|--variant) global+=("$1" "$2"); shift ;;
     --no-land) global+=("$1") ;;
-    --trials|--batteries) sub+=("$1" "$2"); shift ;;
+    --trials|--batteries|--empty) sub+=("$1" "$2"); shift ;;
     --debug) export EXP_DEBUG=1 ;;
     *) die "unknown option: $1" ;;
   esac

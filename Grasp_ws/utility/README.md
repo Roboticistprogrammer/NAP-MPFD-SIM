@@ -20,7 +20,7 @@ the arm through Gazebo transport topics.
 | `launch_sim.sh [--headless] [--fg] [--build]` | XRCE-DDS agent + PX4 SITL + Gazebo world + GUI, waits for EKF |
 | `takeoff.sh [alt_m]` | arm (retries until preflight passes) + takeoff, default 2.5 m |
 | `gripper.sh <cmd>` | `open`, `close [N]` (finger force), `home` `reach` `grab` `carry` `sweep` `demo` `state`, `pose <yaw> <shoulder> <elbow>`, `joint <name> <rad>` |
-| `experiment.sh <cmd>` | grasp experiment: `single A\|B\|E`, `tune A\|B --grip ...`, `protocol`, `export <session>` - see `../../07_grasp_experiment.md` |
+| `experiment.sh <cmd>` | grasp experiment: `single A\|B\|E`, `tune A\|B --grip ...`, `protocol`, `export <session>`, `dataset <session>` - see `../../07_grasp_experiment.md` |
 | `land.sh` | land in place, wait for disarm |
 | `status.sh` | processes, armed/altitude/EKF, DDS link, RAM, GPU |
 | `px4.sh <module> [args]` | any pxh command against the daemon, e.g. `./px4.sh commander status` |

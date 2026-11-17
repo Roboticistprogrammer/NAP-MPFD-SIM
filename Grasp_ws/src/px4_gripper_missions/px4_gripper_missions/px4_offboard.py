@@ -51,6 +51,11 @@ class Setpoint:
     y: float
     z: float
     yaw: float = 0.0
+    # Velocity feed-forward (NED, m/s) added to the position loop's velocity
+    # demand. 0 = none: PX4 then tracks the position setpoint with its P gain alone.
+    vx: float = 0.0
+    vy: float = 0.0
+    vz: float = 0.0
 
 
 class PX4OffboardController:
@@ -151,6 +156,7 @@ class PX4OffboardController:
         # Setpoint(...)) — explicit float() avoids that crashing at
         # publish time (caught by test_offboard_engages_then_arms_together_at_warmup_tick).
         msg.position = [float(sp.x), float(sp.y), float(sp.z)]
+        msg.velocity = [float(sp.vx), float(sp.vy), float(sp.vz)]
         msg.yaw = float(sp.yaw)
         msg.timestamp = self._now_us()
         self._trajectory_pub.publish(msg)
@@ -199,11 +205,13 @@ class PX4OffboardController:
 
     # -- motion ---------------------------------------------------------------
 
-    def goto_position(self, x: float, y: float, z: float, yaw: float = 0.0) -> None:
-        """Update the streamed setpoint. Non-blocking — the heartbeat
-        timer (already running) picks it up on its next tick."""
+    def goto_position(self, x: float, y: float, z: float, yaw: float = 0.0,
+                      vx: float = 0.0, vy: float = 0.0, vz: float = 0.0) -> None:
+        """Update the streamed setpoint (optionally with a NED velocity
+        feed-forward). Non-blocking — the heartbeat timer (already running)
+        picks it up on its next tick."""
         with self._lock:
-            self._setpoint = Setpoint(x, y, z, yaw)
+            self._setpoint = Setpoint(x, y, z, yaw, vx, vy, vz)
 
     def hold_position(self, duration_s: float) -> None:
         """Block for duration_s while the heartbeat timer keeps

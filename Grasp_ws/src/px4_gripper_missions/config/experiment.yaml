@@ -44,9 +44,48 @@ randomization:
   grasp_offset_jitter_m: 0.003     # 1-sigma, along the cylinder axis
 
 protocol:
+  variant: legacy                  # legacy | small_lift  (override: --variant)
   batteries: 30                    # A/B interleaved within every battery
   trials_per_battery: 10
-  empty_per_battery: 1             # "E about every 10 trials"
+  empty_per_battery: 1             # "E about every 10 trials" (override: --empty)
+
+# Small-lift variant (Zimmer et al. 2019 adapted to the UAV; see 08_small_lift_plan.md).
+# Phases after the close: small_lift -> lift -> hold -> shake (only if the grasp
+# held) -> release. t0 = start of small_lift = the window anchor, and also the
+# t_lift that outcome timings are measured from.
+small_lift:
+  sl_height_m: 0.15                # rise during the small-lift (SL) window (0.10 m tracked only 61 %)
+  sl_duration_s: 1.5               # minimum-jerk profile, starts and ends at rest
+  full_lift_height_m: 1.0          # total rise from the grasp height, SL included
+  full_lift_peak_speed_mps: 0.30   # peak speed of the remaining minimum-jerk rise
+  velocity_feedforward: true       # send the profile's velocity too, so the drone follows it
+                                   # (PX4's position loop alone lags the setpoint by ~2 s)
+  # Grip forces tuned 2026-10-17 for this profile (0.15 m / 1.5 s, feed-forward, 1.0 m lift): logistic
+  # fit of held vs applied force over 127 valid trials gave 50 % held at 1.46 N (A, sharp) and 2.75 N
+  # (B, shallower). The legacy forces (scenarios.A/B) stay for the 0.40 m lift. Re-tune after any change
+  # to the profile, cylinder, pads or friction.
+  grip_force_n: {A: 1.46, B: 2.75}
+  put_down: false                  # set a held cylinder back on the table before opening (slow; leaves
+                                   # the arm swinging, so the next alignment often fails)
+  window_rate_hz: 50.0             # dataset grid (75 samples per SL window)
+  baseline_s: 0.5                  # pre-SL hover used for mean subtraction (end of close)
+
+# Stability shake after a successful hold. Positions are fractions of amplitude_m
+# along axis_world, visited in order from the hold position.
+shake:
+  axis_world: [0.0, 1.0, 0.0]      # along the cylinder axis: friction carries the load
+  amplitude_m: 0.3
+  sequence: [1.0, -1.0, 0.0]       # centre -> +A -> -A -> centre
+  leg_duration_s: 2.0              # minimum-jerk, per leg (1.0 s was too violent: 0 of 3 held grasps survived;
+                                   # peak acceleration of the 0.6 m leg: 3.5 m/s^2 at 1 s, 0.9 m/s^2 at 2 s)
+  settle_s: 0.5                    # hover after the last leg before labelling
+  # Per-scenario intensity (overrides the keys above), tuned 2026-11-11 so each scenario's held grasps
+  # are a mix of stable and unstable. One shared shake made y_stable follow the scenario (A 1 of 10
+  # stable, B 7 of 8). Unstable share of held grasps vs A leg time: 2.0 s ~79 %, 2.15 s 62 %, 2.4 s 9 %,
+  # 3.0 s 0 %; B at 1.25 s: 11 of 34 (32 %). Re-tune after changing the forces, cylinder, pads or friction.
+  per_scenario:
+    A: {leg_duration_s: 2.25}
+    B: {leg_duration_s: 1.25}
 
 motion:
   cruise_alt_m: 2.4                # drone (model frame) z while transiting

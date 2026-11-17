@@ -1,0 +1,48 @@
+# Dataset channel definition (single source of truth for the window builder).
+# A hardware recorder should reproduce `inputs` exactly, in this order.
+#
+# inputs: what a detector on the real drone could see. `topic`/`field` are
+#   PX4 ULog names; `derived` channels are computed from a topic (see windows.py).
+# static_tier1: per-trial constants for the gripper (Tier-1: what was commanded).
+#   They do not vary inside a window, so they are kept out of the time series.
+# privileged: simulator ground truth and hidden parameters. Labelling and
+#   analysis only - never a model input. In particular the applied grip force
+#   decides the outcome in this simulator, and scenario identity (A/B) is a
+#   proxy for it.
+
+inputs:
+  - {name: thrust_sp_x,  topic: vehicle_thrust_setpoint, field: 'xyz[0]'}
+  - {name: thrust_sp_y,  topic: vehicle_thrust_setpoint, field: 'xyz[1]'}
+  - {name: thrust_sp_z,  topic: vehicle_thrust_setpoint, field: 'xyz[2]'}
+  - {name: torque_sp_x,  topic: vehicle_torque_setpoint, field: 'xyz[0]'}
+  - {name: torque_sp_y,  topic: vehicle_torque_setpoint, field: 'xyz[1]'}
+  - {name: torque_sp_z,  topic: vehicle_torque_setpoint, field: 'xyz[2]'}
+  - {name: motor_0,      topic: actuator_motors, field: 'control[0]'}
+  - {name: motor_1,      topic: actuator_motors, field: 'control[1]'}
+  - {name: motor_2,      topic: actuator_motors, field: 'control[2]'}
+  - {name: motor_3,      topic: actuator_motors, field: 'control[3]'}
+  - {name: rate_x,       topic: vehicle_angular_velocity, field: 'xyz[0]'}
+  - {name: rate_y,       topic: vehicle_angular_velocity, field: 'xyz[1]'}
+  - {name: rate_z,       topic: vehicle_angular_velocity, field: 'xyz[2]'}
+  - {name: acc_x,        topic: sensor_combined, field: 'accelerometer_m_s2[0]'}
+  - {name: acc_y,        topic: sensor_combined, field: 'accelerometer_m_s2[1]'}
+  - {name: acc_z,        topic: sensor_combined, field: 'accelerometer_m_s2[2]'}
+  - {name: att_roll,     topic: vehicle_attitude, derived: roll}
+  - {name: att_pitch,    topic: vehicle_attitude, derived: pitch}
+  - {name: lpos_z,       topic: vehicle_local_position, field: z}
+  - {name: lpos_vz,      topic: vehicle_local_position, field: vz}
+  - {name: lpos_az,      topic: vehicle_local_position, field: az}
+
+static_tier1:
+  - grip_state          # 1 = gripper commanded closed during the windows
+  - arm_shoulder_cmd    # commanded arm pose (rad), from arm.reach_pose
+  - arm_elbow_cmd
+
+privileged:
+  - grip_force_n            # applied grip force (nominal x jitter)
+  - grasp_offset_actual_m
+  - scenario
+  - rel_disp                # cylinder displacement relative to the grasp point
+  - tilt_change_deg
+  - finger_l                # sim-only Tier-2 ablation
+  - finger_r
