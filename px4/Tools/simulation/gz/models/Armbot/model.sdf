@@ -79,32 +79,28 @@
       </collision>
     </link>
 
-    <!-- ===== Two-finger parallel gripper =====
-         Replaces the original single hinged jaw_link (a 6 cm rod against a
-         2 cm block, which had no opposing surface and could not hold
-         anything; original kept as model.sdf.orig).
+    <!-- ===== Two-jaw claw (servo-like), replaces the force-controlled parallel fingers =====
+         Matches the real ArmBot claw in kind: two pivoting jaws closed by one 9 g servo
+         through a linkage (real: open at 0 and 180 deg, fully closed at 96 deg; see
+         NAP-MPFD armbot_gripper_logger). Dimensions are estimates from product photos
+         (+-30 %), adjusted so the 50 mm test cylinder fits and the jaw tips clear the table.
 
-         Geometry, in this model's frame with all joints at zero (arm
-         pointing along +x, centreline z = 0.110):
+         Geometry, model frame, all joints at zero (arm along +x, centreline z = 0.110):
            palm face             x = 0.2725
-           grasp point (centre)  x = 0.3025, y = 0, z = 0.110
-           fingers               x 0.2725 .. 0.3275 (55 mm long)
-         The fingers slide along z (perpendicular to the arm and to the
-         cylinder axis, which must lie along the model's y axis), so with
-         the arm pointing straight down they pinch horizontally.
-         Pad-to-pad gap: 76 mm open, 6 mm fully closed; a 50 mm cylinder
-         is touched after 13 mm of travel per finger.
+           grasp point (centre)  x = 0.3025, y = 0, z = 0.110   (unchanged)
+           jaw pivots            x = 0.2725, z = 0.110 +- 0.020 (axis along y = cylinder axis)
+           jaws                  55 mm long, 14 mm wide (along y), inner face through the pivot
+           pads                  two per jaw, 35 x 4 x 2 mm, at 17.5-52.5 mm from the pivot, y = +-4 mm
+         Joint angle q: 0 = jaw parallel to the arm, + closes, - opens (open ~ -0.6 rad).
 
-         Each finger touches the object through two small pads 20 mm apart
-         along y. That fixes the contact layout, so the friction torque
-         resisting rotation about the pinch axis (the off-centre grasp
-         failure mode) is well defined instead of depending on how the
-         solver happens to discretise a flat-face line contact.
-
-         Actuation is force control: ApplyJointForce on each finger,
-         topics /model/armbot/joint/finger_{left,right}_joint/cmd_force
-         (gz.msgs.Double, newtons, + closes, - opens). The commanded force
-         is the experiment's "grip level". -->
+         Actuation (ASSUMPTIONS, see 09_fsr_plan.md): each jaw follows a position command like
+         a hobby servo: JointPositionController with a P gain (servo stiffness through the
+         linkage) and a torque limit (stall torque through the linkage). The squeeze is
+         therefore a physical outcome: gain x (commanded angle - angle at which the cylinder
+         stops the jaw), capped by the torque limit; it changes if the cylinder moves.
+         Command topics /model/armbot/joint/jaw_{left,right}_joint/cmd_pos (gz.msgs.Double, rad).
+         Contact sensors on every pad (/model/armbot/jaw_*/pad_*/contact) stand for the FSRs;
+         they need gz-sim-contact-system in the world. -->
     <link name="gripper_base_link">
       <pose relative_to="__model__">0 0 0 0 0 0</pose>
       <inertial>
@@ -126,82 +122,105 @@
       </collision>
     </link>
 
-    <link name="finger_left_link">
-      <!-- open position: inner face at z = 0.110 + 0.040 -->
-      <pose relative_to="__model__">0.3000 0 0.154 0 0 0</pose>
+
+    <link name="jaw_left_link">
+      <pose relative_to="jaw_left_joint"/>
       <inertial>
-        <mass>0.01</mass>
-        <inertia>
-          <ixx>0.0000008</ixx><iyy>0.0000026</iyy><izz>0.0000033</izz>
-          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
-        </inertia>
+        <pose>0.0275 0 0.003 0 0 0</pose>
+        <mass>0.008</mass>
+        <!-- ASSUMPTION: iyy/izz raised from ~2e-6 to stand for the servo rotor and
+             linkage inertia reflected through the gearbox (keeps the 4 ms step stable). -->
+        <inertia><ixx>0.000002</ixx><iyy>0.00004</iyy><izz>0.00004</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
       </inertial>
-      <visual name="finger_visual">
-        <geometry><box><size>0.055 0.03 0.008</size></box></geometry>
+      <visual name="jaw_visual">
+        <pose>0.0275 0 0.003 0 0 0</pose>
+        <geometry><box><size>0.055 0.014 0.006</size></box></geometry>
         <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
       </visual>
-      <collision name="finger_collision">
-        <geometry><box><size>0.055 0.03 0.008</size></box></geometry>
+      <collision name="jaw_collision">
+        <pose>0.0275 0 0.003 0 0 0</pose>
+        <geometry><box><size>0.055 0.014 0.006</size></box></geometry>
       </collision>
       <collision name="pad_a">
-        <pose>0.0025 0.010 -0.005 0 0 0</pose>
-        <geometry><box><size>0.035 0.008 0.002</size></box></geometry>
-        <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
-      </collision>
-      <collision name="pad_b">
-        <pose>0.0025 -0.010 -0.005 0 0 0</pose>
-        <geometry><box><size>0.035 0.008 0.002</size></box></geometry>
+        <pose>0.035 0.004 -0.001 0 0 0</pose>
+        <geometry><box><size>0.035 0.004 0.002</size></box></geometry>
         <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
       </collision>
       <visual name="pad_a_visual">
-        <pose>0.0025 0.010 -0.005 0 0 0</pose>
-        <geometry><box><size>0.035 0.008 0.002</size></box></geometry>
+        <pose>0.035 0.004 -0.001 0 0 0</pose>
+        <geometry><box><size>0.035 0.004 0.002</size></box></geometry>
         <material><ambient>0.85 0.2 0.15 1</ambient><diffuse>0.85 0.2 0.15 1</diffuse></material>
       </visual>
+      <collision name="pad_b">
+        <pose>0.035 -0.004 -0.001 0 0 0</pose>
+        <geometry><box><size>0.035 0.004 0.002</size></box></geometry>
+        <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+      </collision>
       <visual name="pad_b_visual">
-        <pose>0.0025 -0.010 -0.005 0 0 0</pose>
-        <geometry><box><size>0.035 0.008 0.002</size></box></geometry>
+        <pose>0.035 -0.004 -0.001 0 0 0</pose>
+        <geometry><box><size>0.035 0.004 0.002</size></box></geometry>
         <material><ambient>0.85 0.2 0.15 1</ambient><diffuse>0.85 0.2 0.15 1</diffuse></material>
       </visual>
+      <sensor name="pad_a_contact" type="contact">
+        <contact><collision>pad_a</collision><topic>/model/armbot/jaw_left/pad_a/contact</topic></contact>
+        <update_rate>250</update_rate>
+        <always_on>1</always_on>
+      </sensor>
+      <sensor name="pad_b_contact" type="contact">
+        <contact><collision>pad_b</collision><topic>/model/armbot/jaw_left/pad_b/contact</topic></contact>
+        <update_rate>250</update_rate>
+        <always_on>1</always_on>
+      </sensor>
     </link>
 
-    <link name="finger_right_link">
-      <!-- open position: inner face at z = 0.110 - 0.040 -->
-      <pose relative_to="__model__">0.3000 0 0.066 0 0 0</pose>
+    <link name="jaw_right_link">
+      <pose relative_to="jaw_right_joint"/>
       <inertial>
-        <mass>0.01</mass>
-        <inertia>
-          <ixx>0.0000008</ixx><iyy>0.0000026</iyy><izz>0.0000033</izz>
-          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
-        </inertia>
+        <pose>0.0275 0 -0.003 0 0 0</pose>
+        <mass>0.008</mass>
+        <!-- ASSUMPTION: iyy/izz raised from ~2e-6 to stand for the servo rotor and
+             linkage inertia reflected through the gearbox (keeps the 4 ms step stable). -->
+        <inertia><ixx>0.000002</ixx><iyy>0.00004</iyy><izz>0.00004</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
       </inertial>
-      <visual name="finger_visual">
-        <geometry><box><size>0.055 0.03 0.008</size></box></geometry>
+      <visual name="jaw_visual">
+        <pose>0.0275 0 -0.003 0 0 0</pose>
+        <geometry><box><size>0.055 0.014 0.006</size></box></geometry>
         <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
       </visual>
-      <collision name="finger_collision">
-        <geometry><box><size>0.055 0.03 0.008</size></box></geometry>
+      <collision name="jaw_collision">
+        <pose>0.0275 0 -0.003 0 0 0</pose>
+        <geometry><box><size>0.055 0.014 0.006</size></box></geometry>
       </collision>
       <collision name="pad_a">
-        <pose>0.0025 0.010 0.005 0 0 0</pose>
-        <geometry><box><size>0.035 0.008 0.002</size></box></geometry>
-        <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
-      </collision>
-      <collision name="pad_b">
-        <pose>0.0025 -0.010 0.005 0 0 0</pose>
-        <geometry><box><size>0.035 0.008 0.002</size></box></geometry>
+        <pose>0.035 0.004 0.001 0 0 0</pose>
+        <geometry><box><size>0.035 0.004 0.002</size></box></geometry>
         <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
       </collision>
       <visual name="pad_a_visual">
-        <pose>0.0025 0.010 0.005 0 0 0</pose>
-        <geometry><box><size>0.035 0.008 0.002</size></box></geometry>
+        <pose>0.035 0.004 0.001 0 0 0</pose>
+        <geometry><box><size>0.035 0.004 0.002</size></box></geometry>
         <material><ambient>0.85 0.2 0.15 1</ambient><diffuse>0.85 0.2 0.15 1</diffuse></material>
       </visual>
+      <collision name="pad_b">
+        <pose>0.035 -0.004 0.001 0 0 0</pose>
+        <geometry><box><size>0.035 0.004 0.002</size></box></geometry>
+        <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+      </collision>
       <visual name="pad_b_visual">
-        <pose>0.0025 -0.010 0.005 0 0 0</pose>
-        <geometry><box><size>0.035 0.008 0.002</size></box></geometry>
+        <pose>0.035 -0.004 0.001 0 0 0</pose>
+        <geometry><box><size>0.035 0.004 0.002</size></box></geometry>
         <material><ambient>0.85 0.2 0.15 1</ambient><diffuse>0.85 0.2 0.15 1</diffuse></material>
       </visual>
+      <sensor name="pad_a_contact" type="contact">
+        <contact><collision>pad_a</collision><topic>/model/armbot/jaw_right/pad_a/contact</topic></contact>
+        <update_rate>250</update_rate>
+        <always_on>1</always_on>
+      </sensor>
+      <sensor name="pad_b_contact" type="contact">
+        <contact><collision>pad_b</collision><topic>/model/armbot/jaw_right/pad_b/contact</topic></contact>
+        <update_rate>250</update_rate>
+        <always_on>1</always_on>
+      </sensor>
     </link>
 
     <joint name="base_yaw_joint" type="revolute">
@@ -240,24 +259,25 @@
       <pose relative_to="__model__">0.2525 0 0.110 0 0 0</pose>
     </joint>
 
-    <!-- + q closes (moves toward the centreline). 0 = open, 0.035 = closed. -->
-    <joint name="finger_left_joint" type="prismatic">
+    <joint name="jaw_left_joint" type="revolute">
       <parent>gripper_base_link</parent>
-      <child>finger_left_link</child>
+      <child>jaw_left_link</child>
+      <pose relative_to="__model__">0.2725 0 0.130 0 0 0</pose>
       <axis>
-        <xyz expressed_in="__model__">0 0 -1</xyz>
-        <limit><lower>0</lower><upper>0.035</upper><effort>50</effort><velocity>0.5</velocity></limit>
-        <dynamics><damping>2.0</damping></dynamics>
+        <xyz expressed_in="__model__">0 1 0</xyz>
+        <limit><lower>-0.8</lower><upper>0.35</upper><effort>0.15</effort><velocity>6</velocity></limit>
+        <dynamics><damping>0.005</damping></dynamics>
       </axis>
     </joint>
 
-    <joint name="finger_right_joint" type="prismatic">
+    <joint name="jaw_right_joint" type="revolute">
       <parent>gripper_base_link</parent>
-      <child>finger_right_link</child>
+      <child>jaw_right_link</child>
+      <pose relative_to="__model__">0.2725 0 0.090 0 0 0</pose>
       <axis>
-        <xyz expressed_in="__model__">0 0 1</xyz>
-        <limit><lower>0</lower><upper>0.035</upper><effort>50</effort><velocity>0.5</velocity></limit>
-        <dynamics><damping>2.0</damping></dynamics>
+        <xyz expressed_in="__model__">0 -1 0</xyz>
+        <limit><lower>-0.8</lower><upper>0.35</upper><effort>0.15</effort><velocity>6</velocity></limit>
+        <dynamics><damping>0.005</damping></dynamics>
       </axis>
     </joint>
 
@@ -283,12 +303,25 @@
       <topic>/model/armbot/joint/elbow_pitch_joint/cmd_pos</topic>
       <p_gain>5</p_gain>
     </plugin>
-    <plugin filename="gz-sim-apply-joint-force-system" name="gz::sim::systems::ApplyJointForce">
-      <joint_name>finger_left_joint</joint_name>
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+      <joint_name>jaw_left_joint</joint_name>
+      <topic>/model/armbot/joint/jaw_left_joint/cmd_pos</topic>
+      <!-- ASSUMPTION: servo stiffness 0.6 N m/rad and stall torque 0.15 N m at the jaw -->
+      <p_gain>0.6</p_gain>
+      <d_gain>0.01</d_gain>
+      <cmd_max>0.15</cmd_max>
+      <cmd_min>-0.15</cmd_min>
+      <initial_position>-0.6</initial_position>
     </plugin>
-    <plugin filename="gz-sim-apply-joint-force-system" name="gz::sim::systems::ApplyJointForce">
-      <joint_name>finger_right_joint</joint_name>
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+      <joint_name>jaw_right_joint</joint_name>
+      <topic>/model/armbot/joint/jaw_right_joint/cmd_pos</topic>
+      <!-- ASSUMPTION: servo stiffness 0.6 N m/rad and stall torque 0.15 N m at the jaw -->
+      <p_gain>0.6</p_gain>
+      <d_gain>0.01</d_gain>
+      <cmd_max>0.15</cmd_max>
+      <cmd_min>-0.15</cmd_min>
+      <initial_position>-0.6</initial_position>
     </plugin>
-
   </model>
 </sdf>

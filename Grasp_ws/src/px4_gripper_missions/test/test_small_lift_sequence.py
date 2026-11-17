@@ -144,3 +144,39 @@ def test_velocity_feedforward_sends_the_profile_velocity(monkeypatch, tmp_path):
     assert vz.max() == pytest.approx(1.875 * 0.10 / 1.5, rel=0.05)      # peak 0.125 m/s
     assert abs(vz[-1]) < 1e-9                                            # ends at rest
     assert np.allclose([v[0] for _, v in sent], 0.0)
+
+
+def _slides_out_after(shake_elapsed_s):
+    """Cylinder slides 10 cm out once the shake has lasted shake_elapsed_s."""
+    start = {}
+
+    def cyl(t, phase):
+        if phase != 'shake':
+            return (0, 0, 0, 0)
+        start.setdefault('t', t)
+        e = t - start['t'] - shake_elapsed_s
+        return (0, 0.1 * min(1.0, max(0.0, e)), 0, 0)
+    return cyl
+
+
+def test_step_stress_counts_the_levels_survived(monkeypatch, tmp_path):
+    exp, row, _ = make_exp(monkeypatch, tmp_path, _slides_out_after(1e9))
+    ss = exp.cfg['shake']['step_stress']
+    exp.cfg['shake']['mode'] = 'step_stress'
+    outcome, holding = exp._lift_hold_shake(row, 'A')
+    assert holding and row['stable_level'] == len(ss['levels_leg_s']) and row['y_stable'] == 1
+
+
+@pytest.mark.parametrize('elapsed, expect_level', [(3.0, 0), (17.5, 2)])
+def test_step_stress_stops_at_the_first_level_not_survived(monkeypatch, tmp_path, elapsed, expect_level):
+    exp, row, _ = make_exp(monkeypatch, tmp_path, _slides_out_after(elapsed))
+    sh = exp.cfg['shake']
+    sh['mode'] = 'step_stress'
+    legs = sh['step_stress']['levels_leg_s']
+    # level k lasts 3 legs x leg time + settle; 17.5 s falls inside level 3 of the default ladder
+    assert sum(3 * l + sh['settle_s'] for l in legs[:2]) < 17.5 < sum(3 * l + sh['settle_s'] for l in legs[:3])
+    outcome, holding = exp._lift_hold_shake(row, 'B')
+    assert outcome.outcome == 'success' and not holding
+    assert row['stable_level'] == expect_level
+    assert row['y_stable'] == int(expect_level >= sh['step_stress']['y_stable_min_level'])
+    assert row['shake_failure_mode'] == 'slide'

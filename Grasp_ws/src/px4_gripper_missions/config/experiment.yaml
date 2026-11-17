@@ -40,7 +40,9 @@ scenarios:
 # in for real-world grasp placement and actuator scatter. Logged per trial.
 randomization:
   seed: 1
-  grip_force_jitter_frac: 0.08     # 1-sigma, fraction of grip_force_n
+  grip_force_jitter_frac: 0.08     # 1-sigma, fraction of grip_force_n (force_fingers)
+  claw_cmd_jitter_rad: 0.006       # 1-sigma, added to the jaw angle command (servo_claw);
+                                   # stands for servo position error and linkage play (to tune)
   grasp_offset_jitter_m: 0.003     # 1-sigma, along the cylinder axis
 
 protocol:
@@ -65,6 +67,10 @@ small_lift:
   # (B, shallower). The legacy forces (scenarios.A/B) stay for the 0.40 m lift. Re-tune after any change
   # to the profile, cylinder, pads or friction.
   grip_force_n: {A: 1.46, B: 2.75}
+  # servo_claw: jaw angle command per scenario [rad]. Bench (claw_bench.py, cylinder on a
+  # support, then hanging): -0.21 held at ~3.2 N per jaw, -0.24 dropped, 0.0 and above sit
+  # at the torque limit (~4.1-4.5 N). FIRST GUESS, to be tuned in flight (experiment.sh tune).
+  claw_cmd_rad: {A: -0.225, B: -0.21}
   put_down: false                  # set a held cylinder back on the table before opening (slow; leaves
                                    # the arm swinging, so the next alignment often fails)
   window_rate_hz: 50.0             # dataset grid (75 samples per SL window)
@@ -79,6 +85,14 @@ shake:
   leg_duration_s: 2.0              # minimum-jerk, per leg (1.0 s was too violent: 0 of 3 held grasps survived;
                                    # peak acceleration of the 0.6 m leg: 3.5 m/s^2 at 1 s, 0.9 m/s^2 at 2 s)
   settle_s: 0.5                    # hover after the last leg before labelling
+  # step_stress: every held grasp gets the same escalating shake, one level per leg
+  # duration (gentle -> harsh), until it fails; stable_level = levels survived and
+  # y_stable = 1 if stable_level >= y_stable_min_level. per_scenario: one shake, with
+  # the per_scenario overrides below (the force_fingers batch used this).
+  mode: step_stress
+  step_stress:
+    levels_leg_s: [3.0, 2.25, 1.5, 1.0]
+    y_stable_min_level: 2
   # Per-scenario intensity (overrides the keys above), tuned 2026-11-11 so each scenario's held grasps
   # are a mix of stable and unstable. One shared shake made y_stable follow the scenario (A 1 of 10
   # stable, B 7 of 8). Unstable share of held grasps vs A leg time: 2.0 s ~79 %, 2.15 s 62 %, 2.4 s 9 %,
@@ -108,6 +122,14 @@ arm:
   reach_pose: {base_yaw: 0.0, shoulder_pitch: -1.45, elbow_pitch: -0.12}   # straight down
 
 gripper:
+  # servo_claw: the two-jaw claw of Armbot/model.sdf (branch feature/servo-claw), commanded
+  # by jaw angle like the real hobby servo. force_fingers: the earlier force-controlled
+  # parallel fingers (branch feature/small-lift-protocol); the force keys below are theirs.
+  type: servo_claw
+  claw:
+    open_cmd_rad: -0.6             # jaws open (each jaw ~34 deg out from parallel)
+    missed_grasp_rad: -0.15        # both jaws closed past this = nothing between them
+                                   # (bench: the 50 mm cylinder stops them at about -0.25)
   open_force_n: -2.0
   missed_grasp_travel_m: 0.030     # finger closed past this = nothing between the pads
 

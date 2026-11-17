@@ -263,6 +263,7 @@ def test_trial_columns_include_what_the_labelling_reads():
 
 def test_grip_force_uses_legacy_values_unless_small_lift_has_its_own():
     cfg = load_experiment_config(os.path.join(SRC_CONFIG, 'experiment.yaml'))
+    cfg['gripper']['type'] = 'force_fingers'          # the earlier gripper's force values
     assert scenario_grip_force(cfg, 'A') == pytest.approx(1.40)
     cfg['protocol']['variant'] = 'small_lift'
     assert scenario_grip_force(cfg, 'A') == pytest.approx(1.46)      # tuned small_lift values
@@ -288,3 +289,25 @@ def test_scenario_shake_overrides_only_the_named_keys():
     assert scenario_shake(cfg, 'A') == {'amplitude_m': 0.3, 'leg_duration_s': 2.0}
     assert scenario_shake(cfg, 'B') == {'amplitude_m': 0.3, 'leg_duration_s': 1.25}
     assert scenario_shake({'shake': {'leg_duration_s': 2.0}}, 'A') == {'leg_duration_s': 2.0}
+
+
+# -- servo claw: jaw angle command and its jitter --------------------------------
+
+def test_claw_uses_jaw_angle_commands_with_additive_jitter():
+    import numpy as np
+    from px4_gripper_missions.experiment import jittered_grip, set_scenario_grip_force
+    cfg = load_experiment_config(os.path.join(SRC_CONFIG, 'experiment.yaml'))
+    cfg['gripper']['type'] = 'servo_claw'
+    assert scenario_grip_force(cfg, 'A') == pytest.approx(cfg['small_lift']['claw_cmd_rad']['A'])
+    set_scenario_grip_force(cfg, 'B', -0.2)
+    assert scenario_grip_force(cfg, 'B') == pytest.approx(-0.2)
+    sigma = cfg['randomization']['claw_cmd_jitter_rad']
+    z = np.random.default_rng(3).standard_normal()
+    assert jittered_grip(cfg, -0.22, np.random.default_rng(3)) == pytest.approx(-0.22 + sigma * z)
+    cfg['gripper']['type'] = 'force_fingers'                   # force: relative jitter
+    frac = cfg['randomization']['grip_force_jitter_frac']
+    assert jittered_grip(cfg, 2.0, np.random.default_rng(3)) == pytest.approx(2.0 * (1 + frac * z))
+
+
+def test_trial_columns_carry_the_pad_forces():
+    assert TRIAL_COLUMNS[-2:] == ['fsr_l', 'fsr_r']
