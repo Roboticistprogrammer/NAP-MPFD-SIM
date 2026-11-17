@@ -172,7 +172,10 @@ def run(b, q_cmd, out_dir):
     t_end = b.now() + 3.0
     while b.now() < t_end:
         sample('hanging'); b.wait(0.02)
-    b.jaws(OPEN); b.wait(0.5)
+    b.jaws(OPEN)
+    t_end = b.now() + 1.0
+    while b.now() < t_end:
+        sample('release'); b.wait(0.02)
     gz_service('set_pose', 'gz.msgs.Pose', 'name: "grasp_cylinder", position: {x: 1.0, y: 1.0, z: 0.03}, '
                'orientation: {w: 0.7071068, x: 0.7071068, y: 0, z: 0}')
     b.wait(0.3)
@@ -181,7 +184,8 @@ def run(b, q_cmd, out_dir):
         w = csv.DictWriter(f, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
     pre = [r for r in rows if r['phase'] == 'closed']; post = [r for r in rows if r['phase'] == 'hanging']
     m = lambda rs, k: float(np.nanmean([r[k] for r in rs])) if rs else float('nan')
-    return dict(q_cmd=q_cmd, q_contact=round(m(pre, 'q_l'), 3), F_l_closed=round(m(pre, 'F_l'), 2),
+    rel = [r for r in rows if r['phase'] == 'release']
+    return dict(q_open_after_1s=round(rel[-1]['q_l'], 3) if rel else None, F_after_open=round(rel[-1]['F_l'], 2) if rel else None, q_cmd=q_cmd, q_contact=round(m(pre, 'q_l'), 3), F_l_closed=round(m(pre, 'F_l'), 2),
                 F_r_closed=round(m(pre, 'F_r'), 2), q_r_contact=round(m(pre, 'q_r'), 3),
                 F_l_hanging=round(m(post[-50:], 'F_l'), 2), F_r_hanging=round(m(post[-50:], 'F_r'), 2),
                 disp_end_mm=round(1000 * post[-1]['disp'], 1), held=post[-1]['disp'] < 0.04,
