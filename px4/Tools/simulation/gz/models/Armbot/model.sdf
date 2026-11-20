@@ -309,6 +309,11 @@
       <!-- ASSUMPTION: servo stiffness 0.6 N m/rad and stall torque 0.15 N m at the jaw -->
       <p_gain>0.6</p_gain>
       <d_gain>0.01</d_gain>
+      <!-- no integral term: a hobby servo is proportional; the plugin default (0.1) wound up
+           while the jaws pressed on the cylinder and then kept them shut after the open command -->
+      <i_gain>0</i_gain>
+      <i_max>0</i_max>
+      <i_min>0</i_min>
       <cmd_max>0.15</cmd_max>
       <cmd_min>-0.15</cmd_min>
       <initial_position>-0.6</initial_position>
@@ -319,6 +324,11 @@
       <!-- ASSUMPTION: servo stiffness 0.6 N m/rad and stall torque 0.15 N m at the jaw -->
       <p_gain>0.6</p_gain>
       <d_gain>0.01</d_gain>
+      <!-- no integral term: a hobby servo is proportional; the plugin default (0.1) wound up
+           while the jaws pressed on the cylinder and then kept them shut after the open command -->
+      <i_gain>0</i_gain>
+      <i_max>0</i_max>
+      <i_min>0</i_min>
       <cmd_max>0.15</cmd_max>
       <cmd_min>-0.15</cmd_min>
       <initial_position>-0.6</initial_position>

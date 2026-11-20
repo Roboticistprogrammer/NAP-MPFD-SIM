@@ -707,6 +707,22 @@ class Experiment:
         off = self.cfg['scenarios'][scenario]['grasp_offset_m'] + offset_jitter
         return centre + axis * off + np.array([0, 0, self.m['grasp_z_offset_m']])
 
+    def _unjam_claw(self) -> bool:
+        """After the open command a cylinder can stay wedged between the claw's jaws (pad
+        force remains, jaws do not open). It is reset to its jig before the next trial
+        anyway, so lift it out (park pose) and let the jaws open; otherwise the closed
+        jaws hit it on the next descent. Returns True if it had stuck."""
+        s = self.gz.state()
+        open_q = self._grip_open()
+        stuck = (s.fsr_l + s.fsr_r) > 0.2 or min(s.joints.get('jaw_left_joint', open_q),
+                                                 s.joints.get('jaw_right_joint', open_q)) > open_q + 0.15
+        if stuck:
+            pose = self.cfg['cylinder']['park_pose']
+            self.gz.set_model_pose(self.cfg['models']['cylinder'], pose[:3], pose[3:])
+            self.gz.set_grip(open_q)
+            self.gz.sleep_sim(0.8)
+        return stuck
+
     def _place_cylinder(self, scenario: str) -> None:
         c = self.cfg['cylinder']
         pose = c['park_pose'] if scenario == 'E' else c['start_pose']
@@ -823,7 +839,7 @@ class Experiment:
             # t_lift is t0, the start of the small lift. y_* are '' when not applicable
             # (E, invalid trial, or y_stable after a failed grasp).
             row.update(t_close=float('nan'), t_sl_end=float('nan'), t_shake=float('nan'),
-                       y_success='', y_stable='', stable_level='', shake_failure_mode='',
+                       y_success='', y_stable='', stable_level='', release_stuck='', shake_failure_mode='',
                        shake_t_drop_s=float('nan'))
         rec = self.recorder
         rec.grip = self._grip_open()
@@ -859,8 +875,11 @@ class Experiment:
             axis = np.array(cfg['cylinder']['axis_world'], dtype=float)
             if scen != 'E':
                 row['grasp_offset_actual_m'] = round(float((s.grasp_point - s.cyl_pos) @ axis), 5)
-                if claw and min(fl, fr) > g['claw']['missed_grasp_rad']:
-                    raise TrialInvalid(f'missed grasp (jaws at {fl:.3f}/{fr:.3f} rad)')
+                # Claw: the pads must feel the cylinder. The jaw angle alone cannot tell a soft
+                # command that stopped at the cylinder from one that closed on nothing.
+                if claw and (s.fsr_l + s.fsr_r) < g['claw']['missed_grasp_force_n']:
+                    raise TrialInvalid(f'missed grasp (pad force {s.fsr_l:.2f}/{s.fsr_r:.2f} N, '
+                                       f'jaws at {fl:.3f}/{fr:.3f} rad)')
                 if not claw and max(fl, fr) > g['missed_grasp_travel_m']:
                     raise TrialInvalid(f'missed grasp (fingers at {fl * 1000:.1f}/{fr * 1000:.1f} mm)')
             rec.set_reference(s.cyl_pos - s.grasp_point, axis_tilt_deg(s.cyl_q))
@@ -889,6 +908,8 @@ class Experiment:
             rec.grip = self._grip_open()
             self.gz.set_grip(rec.grip)
             self.gz.sleep_sim(0.5)
+            if gripper_type(cfg) == 'servo_claw':
+                row['release_stuck'] = int(self._unjam_claw())
         except TrialInvalid as e:
             row['valid'] = False
             row['invalid_reason'] = str(e)

@@ -24,6 +24,11 @@ case ":${GZ_SIM_RESOURCE_PATH:-}:" in
   *) export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH:+$GZ_SIM_RESOURCE_PATH:}$WS_DIR/model" ;;
 esac
 
+# Gazebo transport on localhost for every process (server, GUI, experiment): with a VPN
+# interface up (e.g. tailscale) gz may otherwise bind publishers to it and some
+# subscribers never receive.
+export GZ_IP="${GZ_IP:-127.0.0.1}"
+
 XRCE_PORT="${XRCE_PORT:-8888}"
 LOG_DIR="${LOG_DIR:-$UTIL_DIR/logs}"
 mkdir -p "$LOG_DIR"

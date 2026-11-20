@@ -128,8 +128,7 @@ gripper:
   type: servo_claw
   claw:
     open_cmd_rad: -0.6             # jaws open (each jaw ~34 deg out from parallel)
-    missed_grasp_rad: -0.15        # both jaws closed past this = nothing between them
-                                   # (bench: the 50 mm cylinder stops them at about -0.25)
+    missed_grasp_force_n: 0.2      # left + right pad force below this after the close = missed
   open_force_n: -2.0
   missed_grasp_travel_m: 0.030     # finger closed past this = nothing between the pads
 
