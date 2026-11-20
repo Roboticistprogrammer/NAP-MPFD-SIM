@@ -299,6 +299,7 @@ def test_claw_uses_jaw_angle_commands_with_additive_jitter():
     cfg = load_experiment_config(os.path.join(SRC_CONFIG, 'experiment.yaml'))
     cfg['gripper']['type'] = 'servo_claw'
     assert scenario_grip_force(cfg, 'A') == pytest.approx(cfg['small_lift']['claw_cmd_rad']['A'])
+    assert scenario_grip_force(cfg, 'E') == scenario_grip_force(cfg, 'A')   # empty control
     set_scenario_grip_force(cfg, 'B', -0.2)
     assert scenario_grip_force(cfg, 'B') == pytest.approx(-0.2)
     sigma = cfg['randomization']['claw_cmd_jitter_rad']

@@ -106,7 +106,8 @@ def scenario_grip_force(cfg: dict, scenario: str) -> float:
     small_lift variant may carry its own tuned forces (small_lift.grip_force_n);
     otherwise the legacy ones apply."""
     if gripper_type(cfg) == 'servo_claw':
-        return float(cfg['small_lift']['claw_cmd_rad'][scenario])
+        cmds = cfg['small_lift']['claw_cmd_rad']
+        return float(cmds.get(scenario, cmds['A']))      # E flies A's motion and closes like A
     if cfg['protocol'].get('variant', 'legacy') == 'small_lift':
         own = (cfg.get('small_lift') or {}).get('grip_force_n') or {}
         if scenario in own:
