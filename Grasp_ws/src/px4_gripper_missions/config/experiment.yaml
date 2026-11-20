@@ -67,10 +67,11 @@ small_lift:
   # (B, shallower). The legacy forces (scenarios.A/B) stay for the 0.40 m lift. Re-tune after any change
   # to the profile, cylinder, pads or friction.
   grip_force_n: {A: 1.46, B: 2.75}
-  # servo_claw: jaw angle command per scenario [rad]. Bench (claw_bench.py, cylinder on a
-  # support, then hanging): -0.21 held at ~3.2 N per jaw, -0.24 dropped, 0.0 and above sit
-  # at the torque limit (~4.1-4.5 N). FIRST GUESS, to be tuned in flight (experiment.sh tune).
-  claw_cmd_rad: {A: -0.225, B: -0.21}
+  # servo_claw: jaw angle command per scenario [rad]. Tuned 2026-11-20 (jaw integral off; sweeps
+  # sim_data/2026112*_tune*): A held 0/5 at -0.20, 2/5 at -0.17, 3/4 at -0.10, 5/5 at -0.12 and
+  # firmer -> about 50 % near -0.16. B held about half the time at every command from -0.04 to
+  # +0.30 (the claw is at its torque limit there; B's tilt outcome follows the grasp offset).
+  claw_cmd_rad: {A: -0.16, B: 0.00}
   put_down: false                  # set a held cylinder back on the table before opening (slow; leaves
                                    # the arm swinging, so the next alignment often fails)
   window_rate_hz: 50.0             # dataset grid (75 samples per SL window)
