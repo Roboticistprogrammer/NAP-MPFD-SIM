@@ -371,3 +371,37 @@ Label permutation within scenario (FSR closing window, 10 %): null AUC 0.47 ± 0
 
 **What this does and does not show.** It shows that *if* the grip force decides the outcome and a sensor reads it to within about 5 % from trial to trial, a prediction before lift-off with AUC around 0.75–0.8 is possible. It does not show that a real FSR on the ArmBot fingertip reaches that precision, nor that a contact force changes before slip (Stage 2), nor that the squeeze force decides the outcome on the real gripper.
 
+## 19. Servo claw with jaw-pad force sensors (2026-11-20)
+
+Branch `feature/servo-claw`; plan `09_fsr_plan.md`. The force-controlled parallel fingers were replaced by a two-jaw claw like the real ArmBot: pivoting 55 mm jaws driven like a hobby servo (position command, proportional gain, torque limit 0.15 N m; jaw dimensions estimated from product photos, +-30 %), contact sensors on every jaw pad as the simulated FSRs (`fsr_l`, `fsr_r`). Per-trial randomness is now on the jaw command (+-0.006 rad, 1 SD) plus the +-3 mm grasp offset. The shake is the step-stress ladder (leg times 3.0 / 2.25 / 1.5 / 1.0 s, `stable_level` = levels survived, `y_stable` = level >= 2). Same cylinder, same small lift.
+
+**Build problems found and fixed.** (1) Gazebo's joint position controller has an integral term by default; it wound up while the jaws pressed on the cylinder, so the grip kept tightening through the hold and the jaws stayed shut after the open command (wedged cylinders, then failed alignments and a knocked-off cylinder on the next trial). A hobby servo is proportional, so the jaw integral is off. Before that fix every held grasp survived every shake level, which is why the first claw tuning was redone. (2) Missed grasps are detected from the pad force. (3) Gazebo transport is pinned to localhost (a VPN interface had captured it).
+
+**Tuning** (5 trials per level): A held 0/5 at -0.20 rad, 2/5 at -0.17, 3/4 at -0.10, 5/5 at -0.12 and firmer, so A = -0.16 rad. B held about half the time at every command from -0.04 to +0.30 rad: at those commands the claw is at its torque limit and B's tilt failures follow the grasp offset, not the command, so B = 0.00 rad.
+
+**Batch** (4 sessions, 150 trials, seeds 201-204, `sim_data/20261120_1*_protocol`): 134 of 135 A/B trials valid; lift failures A 40/67 (60 %), B 20/67 (30 %); 15 E controls all empty; no wedged cylinder after the fix. Pad force at t0 (left + right): A 4.11 N held vs 3.81 N failed (SD 0.3 / 0.85), B 9.12 N held vs 9.00 N failed.
+
+**When does the pad force fall?** For 49 of 60 failed grasps the summed pad force drops by 20 % inside the window, at a median 0.82 s after t0, against slip onset (10 mm) at 0.8 s and the drop at 1.038 s. It falls before the slip onset in 63 % of them, by a median 0.076 s, and 0.18 s before the drop. Only 3 of 74 held grasps show such a fall.
+
+**AUC within each scenario** (A / B; SVM, repeated stratified CV; FSR rows are the mean of 10 sensor realizations; each scenario has 67 trials, so the standard error is about 0.07):
+
+| Input | 0.4 s | 0.6 s | 0.8 s | 1.0 s |
+|---|---|---|---|---|
+| 21 drone channels | 0.63 / 0.47 | 0.56 / 0.47 | 0.62 / 0.85 | 0.69 / 0.99 |
+| FSR, ideal (contact force) | 0.43 / 0.52 | 0.43 / 0.59 | 0.71 / 0.90 | 0.78 / 0.99 |
+| FSR 402, 5 % error | 0.43 / 0.50 | 0.46 / 0.48 | 0.75 / 0.74 | 0.77 / 0.98 |
+| FSR 402, 25 % error | 0.48 / 0.51 | 0.46 / 0.50 | 0.73 / 0.73 | 0.78 / 0.98 |
+| drone + FSR ideal | 0.61 / 0.51 | 0.58 / 0.54 | 0.63 / 0.89 | 0.71 / 1.00 |
+| drone + FSR 5 % | 0.72 / 0.51 | 0.66 / 0.52 | 0.70 / 0.85 | 0.74 / 0.99 |
+
+FSR in the closing window only (before lift-off): A 0.47, B 0.53 (ideal sensor).
+
+**Reading.**
+1. **No early warning from the pad force either.** Within a scenario the FSR is at chance before 0.8 s (0.43-0.59), and so is the closing window. The squeeze at t0 hardly differs between grasps that will hold and grasps that will fail. The pooled AUC (about 0.64 from 0.2 s, even at 25 % sensor error) is not grip information: the FSR level reveals the scenario (A about 4 N, B about 9 N), and the scenarios fail at different rates (60 % against 30 %). Pooled scores must not be quoted for this batch.
+2. **The FSR detects the slip itself a little earlier and better than the drone.** The pad force falls at about the slip onset, 0.08 s before the 10 mm mark and about 0.2 s before the drop. At 0.8 s the FSR gives A 0.71-0.75 against 0.62 from the drone channels; at 1.0 s A 0.78 against 0.69. In B both reach 0.85-0.99 by 0.8-1.0 s. Sensor quality matters little (5 % and 25 % error give similar AUC), because the signal is a large relative fall, not a precise level.
+3. **Why no margin before slip.** The per-trial randomness that decides the outcome (grasp offset, a small command jitter) changes the squeeze by far less than it changes the friction demand; for B the claw is at its torque limit, so the squeeze is the same in every trial. A force sensor can only see the margin if the margin shows up as a different squeeze, which here it barely does.
+4. **y_stable is confounded with the scenario again.** Held A grasps reach shake level 0 or 1 (25 and 2), held B grasps mostly 3-4 (39 of 47 at 3 or 4). A runs at a marginal squeeze to get 50 % lift failures, so its held grasps do not survive any shake; B runs at full torque. With one shake ladder for both scenarios (step-stress), balancing y_success for A makes y_stable nearly always 0 for A. Analyse y_stable within B, or report stable_level as a measure of grip margin.
+5. **Caveats.** Claw geometry, servo stiffness and torque limit are estimates; contact forces come from the ODE contact model; 67 trials per scenario. A single trial seen during development showed the pad force falling 0.3 s before the drop; the batch median is 0.18 s.
+
+**What this means.** On this claw, as with the force-controlled fingers, nothing measured on the drone or at the jaw pads predicts the outcome before the cylinder starts to move. A jaw-pad FSR does give the clearest and slightly earliest signal of a slip that has started (about 0.2 s before the drop), and it works with a cheap, imprecise sensor. Earlier warning would need a quantity that differs between secure and insecure grasps before slip, for example the object's position in the jaws (a sensor array along the jaw) or a deliberate probing motion.
+
