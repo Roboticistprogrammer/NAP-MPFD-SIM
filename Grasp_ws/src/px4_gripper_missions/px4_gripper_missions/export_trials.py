@@ -40,13 +40,16 @@ PX4_SIGNALS = [
                                      ('xyz[2]', 'rate_z')]),
     ('sensor_combined', 0, [('accelerometer_m_s2[0]', 'acc_x'), ('accelerometer_m_s2[1]', 'acc_y'),
                             ('accelerometer_m_s2[2]', 'acc_z')]),
-    ('vehicle_local_position', 0, [('z', 'lpos_z'), ('vz', 'lpos_vz')]),
+    ('vehicle_local_position', 0, [('z', 'lpos_z'), ('vz', 'lpos_vz'), ('az', 'lpos_az')]),
+    ('hover_thrust_estimate', 0, [('hover_thrust', 'hover_thrust')]),
 ]
 
 GZ_COLUMNS = ['phase', 'drone_roll', 'drone_pitch', 'grasp_z', 'cyl_z', 'cyl_tilt_deg',
               'rel_disp', 'tilt_change_deg', 'finger_l', 'finger_r', 'grip_force_cmd']
 LABEL_COLUMNS = ['index', 'battery', 'scenario', 'grip_force_n', 'grasp_offset_actual_m',
-                 'outcome', 'failure_mode', 't_onset_s', 't_drop_s']
+                 'outcome', 'failure_mode', 't_onset_s', 't_drop_s',
+                 # small_lift sessions only (empty for legacy ones)
+                 't_close', 't_sl_end', 't_shake', 'y_success', 'y_stable', 'shake_failure_mode']
 
 
 def hold_sample(t_src: np.ndarray, v_src: np.ndarray, t_grid: np.ndarray) -> np.ndarray:

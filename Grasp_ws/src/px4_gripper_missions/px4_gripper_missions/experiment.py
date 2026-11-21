@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import hashlib
 import json
 import math
 import os
@@ -42,8 +43,13 @@ import yaml
 
 from px4_gripper_missions.config_loader import get_config_dir
 from px4_gripper_missions.geometry import axis_tilt_deg, enu_to_ned, quat_to_rpy
+from px4_gripper_missions.trajectory import (duration_for_peak_speed, min_jerk, min_jerk_rate,
+                                           shake_legs)
 
 SCENARIOS = ('A', 'B', 'E')
+VARIANTS = ('legacy', 'small_lift')
+# Phases whose cylinder motion decides y_success, per protocol variant.
+OUTCOME_PHASES = {'legacy': ('lift', 'hold'), 'small_lift': ('small_lift', 'lift', 'hold')}
 
 
 class SessionAbort(RuntimeError):
@@ -87,6 +93,57 @@ def generate_protocol_plan(batteries: int, per_battery: int, empty_per_battery: 
         for s_i, scen in enumerate(slots):
             plan.append(TrialSpec(len(plan), b + 1, s_i + 1, scen))
     return plan
+
+
+def gripper_type(cfg: dict) -> str:
+    """'servo_claw' (jaw angle command, rad) or 'force_fingers' (finger force, N)."""
+    return (cfg.get('gripper') or {}).get('type', 'force_fingers')
+
+
+def scenario_grip_force(cfg: dict, scenario: str) -> float:
+    """Nominal grip command for a scenario: finger force [N] for the force_fingers
+    gripper, jaw angle [rad] for the servo_claw (small_lift.claw_cmd_rad). The
+    small_lift variant may carry its own tuned forces (small_lift.grip_force_n);
+    otherwise the legacy ones apply."""
+    if gripper_type(cfg) == 'servo_claw':
+        cmds = cfg['small_lift']['claw_cmd_rad']
+        return float(cmds.get(scenario, cmds['A']))      # E flies A's motion and closes like A
+    if cfg['protocol'].get('variant', 'legacy') == 'small_lift':
+        own = (cfg.get('small_lift') or {}).get('grip_force_n') or {}
+        if scenario in own:
+            return float(own[scenario])
+    return float(cfg['scenarios'][scenario]['grip_force_n'])
+
+
+def jittered_grip(cfg: dict, nominal: float, rng) -> float:
+    """Per-trial grip command: the finger force varies by a fraction (force_fingers),
+    the jaw angle command by an absolute amount in rad (servo_claw)."""
+    rz = cfg['randomization']
+    if gripper_type(cfg) == 'servo_claw':
+        return float(nominal + rz['claw_cmd_jitter_rad'] * rng.standard_normal())
+    return float(nominal * (1.0 + rz['grip_force_jitter_frac'] * rng.standard_normal()))
+
+
+def scenario_shake(cfg: dict, scenario: str) -> dict:
+    """Shake settings for a scenario: the shared `shake` block, with any keys from
+    `shake.per_scenario.<scenario>` (e.g. leg_duration_s, amplitude_m) overriding it.
+    The shake only decides y_stable, which is labelled after the window the models
+    see, so a per-scenario intensity is a difficulty knob like the grip force."""
+    sh = dict(cfg['shake'])
+    over = (sh.pop('per_scenario', None) or {}).get(scenario) or {}
+    sh.update(over)
+    return sh
+
+
+def set_scenario_grip_force(cfg: dict, scenario: str, value: float) -> None:
+    """Command-line override: write where scenario_grip_force() will read."""
+    if gripper_type(cfg) == 'servo_claw':
+        cfg['small_lift'].setdefault('claw_cmd_rad', {})[scenario] = float(value)
+        return
+    if cfg['protocol'].get('variant', 'legacy') == 'small_lift':
+        cfg.setdefault('small_lift', {}).setdefault('grip_force_n', {})[scenario] = float(value)
+    else:
+        cfg['scenarios'][scenario]['grip_force_n'] = float(value)
 
 
 # ---------------------------------------------------------------- outcome
@@ -143,6 +200,23 @@ def classify_outcome(t: Sequence[float], disp: Sequence[float], tilt_deg: Sequen
     return o
 
 
+def classify_stability(t: Sequence[float], d_xyz: Sequence[Sequence[float]],
+                       tilt_deg: Sequence[float], t_shake: float, slip_onset_m: float,
+                       drop_m: float, tilt_threshold_deg: float,
+                       tilt_fail_deg: float = 45.0) -> Outcome:
+    """Label the stability shake (y_stable): the same rules as classify_outcome,
+    applied to the cylinder's motion relative to where it was when the shake
+    began. `d_xyz` is the per-sample cylinder offset from the grasp point
+    (rel_dx, rel_dy, rel_dz); 'success' here means it stayed in the grasp."""
+    t = np.asarray(t, dtype=float)
+    if len(t) == 0:
+        return Outcome('invalid')
+    d = np.asarray(d_xyz, dtype=float).reshape(-1, 3)
+    tilt = np.asarray(tilt_deg, dtype=float)
+    return classify_outcome(t, np.linalg.norm(d - d[0], axis=1), tilt - tilt[0], t_shake,
+                            slip_onset_m, drop_m, tilt_threshold_deg, tilt_fail_deg)
+
+
 # ---------------------------------------------------------------- recording
 
 TRIAL_COLUMNS = [
@@ -153,7 +227,11 @@ TRIAL_COLUMNS = [
     'rel_dx', 'rel_dy', 'rel_dz', 'rel_disp', 'tilt_change_deg',
     'finger_l', 'finger_r', 'shoulder', 'elbow',
     'grip_force_cmd', 'cmd_x', 'cmd_y', 'cmd_z',
+    'fsr_l', 'fsr_r',
 ]
+# finger_l / finger_r: finger travel [m] (force_fingers) or jaw angle [rad] (servo_claw).
+# grip_force_cmd: the grip command (N or rad, same split). fsr_l / fsr_r: normal
+# contact force on the left / right jaw pads [N] (servo_claw; nan otherwise).
 
 
 class TrialRecorder:
@@ -204,11 +282,12 @@ class TrialRecorder:
                 *np.round(s.drone_pos, 5), round(r, 5), round(p, 5), round(y, 5),
                 *np.round(g, 5), *np.round(s.cyl_pos, 5), round(tilt, 3),
                 *np.round(d, 5), round(disp, 5), round(dtilt, 3),
-                round(j.get('finger_left_joint', float('nan')), 5),
-                round(j.get('finger_right_joint', float('nan')), 5),
+                round(j.get('finger_left_joint', j.get('jaw_left_joint', float('nan'))), 5),
+                round(j.get('finger_right_joint', j.get('jaw_right_joint', float('nan'))), 5),
                 round(j.get('shoulder_pitch_joint', float('nan')), 4),
                 round(j.get('elbow_pitch_joint', float('nan')), 4),
                 self.grip, *np.round(self.cmd, 4),
+                round(s.fsr_l, 4), round(s.fsr_r, 4),
             ])
 
 
@@ -226,6 +305,9 @@ class Experiment:
     def __init__(self, cfg: dict, out_dir: str, label: str):
         self.cfg = cfg
         self.m = cfg['motion']
+        self.variant = cfg['protocol'].get('variant', 'legacy')
+        if self.variant not in VARIANTS:
+            raise ValueError(f'protocol.variant must be one of {VARIANTS}, got {self.variant!r}')
         self.session = f'{time.strftime("%Y%m%d_%H%M%S")}_{label}'
         self.out = os.path.join(out_dir, self.session)
         os.makedirs(os.path.join(self.out, 'trials'), exist_ok=True)
@@ -323,7 +405,8 @@ class Experiment:
         from px4_gripper_missions.px4_offboard import PX4OffboardController, Setpoint
 
         mdl = self.cfg['models']
-        self.gz = GzWorld(self.cfg['world'], mdl['drone'], mdl['arm'], mdl['cylinder'])
+        self.gz = GzWorld(self.cfg['world'], mdl['drone'], mdl['arm'], mdl['cylinder'],
+                          gripper_type=gripper_type(self.cfg))
         self.gz.start()
         self.gz.add_listener(self.recorder)
 
@@ -418,12 +501,15 @@ class Experiment:
             raise SessionAbort(f'PX4 left armed offboard flight (arming_state='
                                f'{st.arming_state}, nav_state={st.nav_state})')
 
-    def _command(self, p_world: np.ndarray) -> None:
+    def _command(self, p_world: np.ndarray, v_world=None) -> None:
+        """Command the drone to p_world (ENU). `v_world` (ENU m/s) is an optional
+        velocity feed-forward; None = position only."""
         self.cmd_world = np.asarray(p_world, dtype=float)
         self.recorder.cmd = self.cmd_world
         sp = enu_to_ned(self.cmd_world) + self.offset_ned
+        v = enu_to_ned(v_world) if v_world is not None else np.zeros(3)
         self.offboard.goto_position(float(sp[0]), float(sp[1]), float(sp[2]),
-                                    self.m['heading_ned_rad'])
+                                    self.m['heading_ned_rad'], float(v[0]), float(v[1]), float(v[2]))
 
     # -- motion primitives -----------------------------------------------
 
@@ -441,6 +527,28 @@ class Experiment:
             frac = min(1.0, (self.gz.sim_time() - t0) * speed / dist)
             self._command(start + (target - start) * frac)
             if frac >= 1.0:
+                return
+            time.sleep(0.02)
+
+    def _run_min_jerk(self, delta, duration_s: float) -> None:
+        """Move the commanded drone position by `delta` (world ENU) along a
+        minimum-jerk profile lasting `duration_s` of sim time; the move starts
+        and ends at rest. With small_lift.velocity_feedforward the matching
+        velocity is sent along with each position setpoint."""
+        start = self.cmd_world.copy()
+        delta = np.asarray(delta, dtype=float)
+        ff = bool(self.cfg.get('small_lift', {}).get('velocity_feedforward', False))
+        t0 = self.gz.sim_time()
+        while True:
+            self._check_px4()
+            self._update_offset()
+            elapsed = self.gz.sim_time() - t0
+            pos = start + delta * float(min_jerk(elapsed / duration_s))
+            if ff:
+                self._command(pos, delta * float(min_jerk_rate(elapsed / duration_s)) / duration_s)
+            else:
+                self._command(pos)
+            if elapsed >= duration_s:
                 return
             time.sleep(0.02)
 
@@ -514,10 +622,13 @@ class Experiment:
 
     # -- session -------------------------------------------------------------
 
-    def takeoff_to_station(self) -> None:
+    def _grip_open(self) -> float:
         g = self.cfg['gripper']
+        return g['claw']['open_cmd_rad'] if gripper_type(self.cfg) == 'servo_claw' else g['open_force_n']
+
+    def takeoff_to_station(self) -> None:
         self._armed_once = False
-        self.gz.set_grip_force(g['open_force_n'])
+        self.gz.set_grip(self._grip_open())
         self.gz.set_arm_pose(self.cfg['arm']['stow_pose'])
         start = self.gz.state().drone_pos.copy()
         self._command(start)
@@ -550,7 +661,7 @@ class Experiment:
 
     def land_home(self) -> None:
         try:
-            self.gz.set_grip_force(self.cfg['gripper']['open_force_n'])
+            self.gz.set_grip(self._grip_open())
             self.fly_drone_to([self.cmd_world[0], self.cmd_world[1], self.m['cruise_alt_m']],
                               self.m['transit_speed_mps'], tol=0.15)
             self.gz.set_arm_pose(self.cfg['arm']['stow_pose'])
@@ -597,6 +708,22 @@ class Experiment:
         off = self.cfg['scenarios'][scenario]['grasp_offset_m'] + offset_jitter
         return centre + axis * off + np.array([0, 0, self.m['grasp_z_offset_m']])
 
+    def _unjam_claw(self) -> bool:
+        """After the open command a cylinder can stay wedged between the claw's jaws (pad
+        force remains, jaws do not open). It is reset to its jig before the next trial
+        anyway, so lift it out (park pose) and let the jaws open; otherwise the closed
+        jaws hit it on the next descent. Returns True if it had stuck."""
+        s = self.gz.state()
+        open_q = self._grip_open()
+        stuck = (s.fsr_l + s.fsr_r) > 0.2 or min(s.joints.get('jaw_left_joint', open_q),
+                                                 s.joints.get('jaw_right_joint', open_q)) > open_q + 0.15
+        if stuck:
+            pose = self.cfg['cylinder']['park_pose']
+            self.gz.set_model_pose(self.cfg['models']['cylinder'], pose[:3], pose[3:])
+            self.gz.set_grip(open_q)
+            self.gz.sleep_sim(0.8)
+        return stuck
+
     def _place_cylinder(self, scenario: str) -> None:
         c = self.cfg['cylinder']
         pose = c['park_pose'] if scenario == 'E' else c['start_pose']
@@ -608,13 +735,99 @@ class Experiment:
                 return
         raise TrialInvalid('cylinder did not settle at its start pose')
 
+    def _classify_lift(self, t_lift: float, scen: str) -> Outcome:
+        """Label y_success from the recorded rows of the current trial."""
+        if scen == 'E':
+            return Outcome('empty')
+        col = TRIAL_COLUMNS.index
+        win = [r for r in self.recorder.rows if r[col('phase')] in OUTCOME_PHASES[self.variant]]
+        o = self.cfg['outcome']
+        return classify_outcome(
+            [r[col('t_sim')] for r in win],
+            [r[col('rel_disp')] for r in win],
+            [r[col('tilt_change_deg')] for r in win],
+            t_lift, o['slip_onset_m'], o['drop_m'], o['tilt_threshold_deg'],
+            o.get('tilt_fail_deg', 45.0))
+
+    def _lift_hold_shake(self, row: dict, scen: str):
+        """Small-lift variant, from the closed gripper to the end of the shake.
+
+        small_lift (t0 .. t0 + sl_duration) -> lift (rest of the rise) -> hold
+        -> y_success; if the grasp held, shake -> y_stable. Fills the timing and
+        label columns of `row`; returns (outcome, still_holding)."""
+        rec, m = self.recorder, self.m
+        sl, sh, o = self.cfg['small_lift'], scenario_shake(self.cfg, scen), self.cfg['outcome']
+
+        rec.phase = 'small_lift'
+        row['t_lift'] = self.gz.sim_time()                      # t0
+        self._run_min_jerk([0, 0, sl['sl_height_m']], sl['sl_duration_s'])
+        row['t_sl_end'] = self.gz.sim_time()
+
+        rec.phase = 'lift'
+        rest = sl['full_lift_height_m'] - sl['sl_height_m']
+        self._run_min_jerk([0, 0, rest],
+                           duration_for_peak_speed(rest, sl['full_lift_peak_speed_mps']))
+        rec.phase = 'hold'
+        self.gz.sleep_sim(m['hold_s'])
+
+        outcome = self._classify_lift(row['t_lift'], scen)
+        if outcome.outcome in ('success', 'fail'):
+            row['y_success'] = int(outcome.outcome == 'success')
+        if outcome.outcome != 'success':
+            return outcome, False
+
+        rec.phase = 'shake'
+        row['t_shake'] = self.gz.sim_time()
+        col = TRIAL_COLUMNS.index
+
+        def stability():
+            win = [r for r in rec.rows if r[col('phase')] == 'shake']
+            return classify_stability(
+                [r[col('t_sim')] for r in win],
+                [[r[col('rel_dx')], r[col('rel_dy')], r[col('rel_dz')]] for r in win],
+                [r[col('tilt_change_deg')] for r in win],
+                row['t_shake'], o['slip_onset_m'], o['drop_m'], o['tilt_threshold_deg'],
+                o.get('tilt_fail_deg', 45.0))
+
+        if sh.get('mode', 'per_scenario') == 'step_stress':
+            # Same escalating shake for every held grasp: one level per leg duration,
+            # gentle to harsh; stop at the first level the grasp does not survive.
+            # stable_level = levels survived; y_stable = survived at least min_level.
+            ss = sh['step_stress']
+            level, st = 0, None
+            for leg_s in ss['levels_leg_s']:
+                for delta, duration in shake_legs(sh['amplitude_m'], sh['sequence'],
+                                                  leg_s, sh['axis_world']):
+                    self._run_min_jerk(delta, duration)
+                self.gz.sleep_sim(sh['settle_s'])
+                st = stability()
+                if st.outcome != 'success':
+                    break
+                level += 1
+            row['stable_level'] = level
+            row['y_stable'] = int(level >= ss['y_stable_min_level'])
+            row['shake_failure_mode'] = st.failure_mode
+            row['shake_t_drop_s'] = st.t_drop_s
+            return outcome, st.outcome == 'success'
+
+        for delta, duration in shake_legs(sh['amplitude_m'], sh['sequence'],
+                                          sh['leg_duration_s'], sh['axis_world']):
+            self._run_min_jerk(delta, duration)
+        self.gz.sleep_sim(sh['settle_s'])
+        st = stability()
+        row['y_stable'] = int(st.outcome == 'success')
+        row['shake_failure_mode'] = st.failure_mode
+        row['shake_t_drop_s'] = st.t_drop_s
+        return outcome, st.outcome == 'success'
+
     def run_trial(self, spec: TrialSpec) -> dict:
         cfg, m, g = self.cfg, self.m, self.cfg['gripper']
         scen = spec.scenario
         sc = cfg['scenarios'][scen]
         rz = cfg['randomization']
-        grip_nominal = spec.grip_force_n if spec.grip_force_n is not None else sc['grip_force_n']
-        grip = float(grip_nominal * (1.0 + rz['grip_force_jitter_frac'] * self.rng.standard_normal()))
+        grip_nominal = (spec.grip_force_n if spec.grip_force_n is not None
+                        else scenario_grip_force(cfg, scen))
+        grip = jittered_grip(cfg, grip_nominal, self.rng)
         jitter = 0.0 if scen == 'E' else float(rz['grasp_offset_jitter_m'] * self.rng.standard_normal())
         target = self._target_for(scen, jitter)
         above = target + [0, 0, m['approach_clearance_m']]
@@ -623,9 +836,15 @@ class Experiment:
                    grasp_offset_cmd_m=round(sc['grasp_offset_m'] + jitter, 5),
                    grasp_offset_actual_m=float('nan'), valid=True, invalid_reason='',
                    t_start=float('nan'), t_lift=float('nan'), t_end=float('nan'), csv='')
+        if self.variant == 'small_lift':
+            # t_lift is t0, the start of the small lift. y_* are '' when not applicable
+            # (E, invalid trial, or y_stable after a failed grasp).
+            row.update(t_close=float('nan'), t_sl_end=float('nan'), t_shake=float('nan'),
+                       y_success='', y_stable='', stable_level='', release_stuck='', shake_failure_mode='',
+                       shake_t_drop_s=float('nan'))
         rec = self.recorder
-        rec.grip = g['open_force_n']
-        self.gz.set_grip_force(g['open_force_n'])
+        rec.grip = self._grip_open()
+        self.gz.set_grip(rec.grip)
         outcome = Outcome('invalid')
         held = False
         try:
@@ -646,51 +865,57 @@ class Experiment:
 
             rec.phase = 'close'
             rec.grip = grip
-            self.gz.set_grip_force(grip)
+            if self.variant == 'small_lift':
+                row['t_close'] = self.gz.sim_time()
+            self.gz.set_grip(grip)
             self.gz.sleep_sim(m['close_wait_s'])
             s = self.gz.state()
-            fl, fr = s.joints.get('finger_left_joint', 0), s.joints.get('finger_right_joint', 0)
+            claw = gripper_type(cfg) == 'servo_claw'
+            fl = s.joints.get('jaw_left_joint' if claw else 'finger_left_joint', 0)
+            fr = s.joints.get('jaw_right_joint' if claw else 'finger_right_joint', 0)
             axis = np.array(cfg['cylinder']['axis_world'], dtype=float)
             if scen != 'E':
                 row['grasp_offset_actual_m'] = round(float((s.grasp_point - s.cyl_pos) @ axis), 5)
-                if max(fl, fr) > g['missed_grasp_travel_m']:
+                # Claw: the pads must feel the cylinder. The jaw angle alone cannot tell a soft
+                # command that stopped at the cylinder from one that closed on nothing.
+                if claw and (s.fsr_l + s.fsr_r) < g['claw']['missed_grasp_force_n']:
+                    raise TrialInvalid(f'missed grasp (pad force {s.fsr_l:.2f}/{s.fsr_r:.2f} N, '
+                                       f'jaws at {fl:.3f}/{fr:.3f} rad)')
+                if not claw and max(fl, fr) > g['missed_grasp_travel_m']:
                     raise TrialInvalid(f'missed grasp (fingers at {fl * 1000:.1f}/{fr * 1000:.1f} mm)')
             rec.set_reference(s.cyl_pos - s.grasp_point, axis_tilt_deg(s.cyl_q))
 
-            rec.phase = 'lift'
-            row['t_lift'] = self.gz.sim_time()
-            self.move_grasp_to(target + [0, 0, m['lift_height_m']], m['lift_speed_mps'], fine=False)
-            rec.phase = 'hold'
-            self.gz.sleep_sim(m['hold_s'])
-
-            rows = list(rec.rows)
-            if scen == 'E':
-                outcome = Outcome('empty')
+            if self.variant == 'small_lift':
+                outcome, held = self._lift_hold_shake(row, scen)
             else:
-                t_i = TRIAL_COLUMNS.index('t_sim')
-                ph_i = TRIAL_COLUMNS.index('phase')
-                win = [r for r in rows if r[ph_i] in ('lift', 'hold')]
-                o = cfg['outcome']
-                outcome = classify_outcome(
-                    [r[t_i] for r in win],
-                    [r[TRIAL_COLUMNS.index('rel_disp')] for r in win],
-                    [r[TRIAL_COLUMNS.index('tilt_change_deg')] for r in win],
-                    row['t_lift'], o['slip_onset_m'], o['drop_m'], o['tilt_threshold_deg'],
-                    o.get('tilt_fail_deg', 45.0))
-            held = outcome.outcome == 'success'
+                rec.phase = 'lift'
+                row['t_lift'] = self.gz.sim_time()
+                self.move_grasp_to(target + [0, 0, m['lift_height_m']], m['lift_speed_mps'],
+                                   fine=False)
+                rec.phase = 'hold'
+                self.gz.sleep_sim(m['hold_s'])
+                outcome = self._classify_lift(row['t_lift'], scen)
+                held = outcome.outcome == 'success'
 
             rec.phase = 'release'
-            if held:   # put it back down gently instead of dropping it
+            # Put a held cylinder back down gently instead of dropping it. The small_lift
+            # variant skips this by default: the cylinder is teleported to its jig before
+            # every trial anyway, and after a 1 m lift the descent leaves the arm swinging,
+            # which made the next trial's alignment fail.
+            if held and (self.variant == 'legacy'
+                         or self.cfg['small_lift'].get('put_down', False)):
                 self.move_grasp_to(target + [0, 0, 0.01], m['lift_speed_mps'], fine=False)
                 self.gz.sleep_sim(0.5)
-            rec.grip = g['open_force_n']
-            self.gz.set_grip_force(g['open_force_n'])
+            rec.grip = self._grip_open()
+            self.gz.set_grip(rec.grip)
             self.gz.sleep_sim(0.5)
+            if gripper_type(cfg) == 'servo_claw':
+                row['release_stuck'] = int(self._unjam_claw())
         except TrialInvalid as e:
             row['valid'] = False
             row['invalid_reason'] = str(e)
             outcome = Outcome('invalid')
-            self.gz.set_grip_force(g['open_force_n'])
+            self.gz.set_grip(self._grip_open())
         finally:
             rows = rec.stop()
             row['t_end'] = self.gz.sim_time()
@@ -716,6 +941,9 @@ class Experiment:
     def write_session(self, plan: List[TrialSpec], mode: str, params: dict, extra: dict) -> None:
         cfg = {k: v for k, v in self.cfg.items() if not k.startswith('_')}
         meta = dict(session=self.session, mode=mode, config_file=self.cfg.get('_path'),
+                    variant=self.variant, git_commit=_git_commit(),
+                    config_sha256=hashlib.sha256(
+                        json.dumps(cfg, sort_keys=True, default=str).encode()).hexdigest(),
                     config=cfg, px4_params=params, ulog=self.ulog_path,
                     px4_time_offset_s=0.0,
                     note='PX4 timestamps equal Gazebo sim time in SITL lockstep',
@@ -734,6 +962,19 @@ class Experiment:
         self.results.append(row)
 
 
+def _git_commit() -> str:
+    """Commit of the code that produced a session ('+dirty' if it has local changes)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=here, text=True,
+                             capture_output=True, timeout=5).stdout.strip()
+        dirty = subprocess.run(['git', 'status', '--porcelain', '--', here], cwd=here, text=True,
+                               capture_output=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    return sha + ('+dirty' if sha and dirty else '')
+
+
 def relabel_session(session_dir: str, cfg: dict) -> List[dict]:
     """Recompute outcome columns of trials.csv from the per-trial ground
     truth with the current `outcome` thresholds (e.g. after changing them)."""
@@ -741,11 +982,14 @@ def relabel_session(session_dir: str, cfg: dict) -> List[dict]:
     with open(path) as f:
         rows = list(csv.DictReader(f))
     o = cfg['outcome']
+    small_lift = 'y_success' in rows[0]          # session written by the small_lift variant
+    phases = OUTCOME_PHASES['small_lift' if small_lift else 'legacy']
     out = []
     for r in rows:
         if r['scenario'] != 'E' and r['valid'] == 'True' and r['csv']:
             with open(os.path.join(session_dir, r['csv'])) as f:
-                win = [g for g in csv.DictReader(f) if g['phase'] in ('lift', 'hold')]
+                gz = list(csv.DictReader(f))
+            win = [g for g in gz if g['phase'] in phases]
             res = classify_outcome([float(g['t_sim']) for g in win],
                                    [float(g['rel_disp']) for g in win],
                                    [float(g['tilt_change_deg']) for g in win],
@@ -753,6 +997,22 @@ def relabel_session(session_dir: str, cfg: dict) -> List[dict]:
                                    o['tilt_threshold_deg'], o.get('tilt_fail_deg', 45.0))
             r.update({k: (round(v, 4) if isinstance(v, float) else v)
                       for k, v in asdict(res).items()})
+            if small_lift:
+                r['y_success'] = int(res.outcome == 'success')
+                shake = [g for g in gz if g['phase'] == 'shake']
+                if res.outcome == 'success' and shake:
+                    st = classify_stability(
+                        [float(g['t_sim']) for g in shake],
+                        [[float(g['rel_dx']), float(g['rel_dy']), float(g['rel_dz'])]
+                         for g in shake],
+                        [float(g['tilt_change_deg']) for g in shake],
+                        float(r['t_shake']), o['slip_onset_m'], o['drop_m'],
+                        o['tilt_threshold_deg'], o.get('tilt_fail_deg', 45.0))
+                    r.update(y_stable=int(st.outcome == 'success'),
+                             shake_failure_mode=st.failure_mode,
+                             shake_t_drop_s=round(st.t_drop_s, 4))
+                else:
+                    r.update(y_stable='', shake_failure_mode='', shake_t_drop_s='nan')
         out.append(r)
     with open(path, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
@@ -770,7 +1030,7 @@ def print_report(results: List[dict]) -> None:
     by = defaultdict(list)
     for r in results:
         by[(r['scenario'], r['grip_force_nominal_n'])].append(r)
-    print('\nscenario  grip[N]  trials  valid  fail  fail%   slide/tilt  mean t_drop[s]')
+    print('\nscenario  grip    trials  valid  fail  fail%   slide/tilt  mean t_drop[s]')
     for (scen, grip), rs in sorted(by.items()):
         v = [r for r in rs if r['valid']]
         f = [r for r in v if r['outcome'] == 'fail']
@@ -789,13 +1049,17 @@ def build_parser() -> argparse.ArgumentParser:
                         help='protocol/single: SCEN=N overrides, e.g. A=0.8 B=2.0; '
                              'tune: grip forces [N] to sweep')
     common.add_argument('--seed', type=int, help='override randomization.seed')
+    common.add_argument('--variant', choices=VARIANTS,
+                        help='override protocol.variant (legacy | small_lift)')
     common.add_argument('--no-land', action='store_true',
                         help='stay airborne at the end (PX4 params are then NOT restored)')
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = p.add_subparsers(dest='mode', required=True)
     pr = sub.add_parser('protocol', parents=[common], help='interleaved A/B batteries with E controls')
     pr.add_argument('--batteries', type=int)
-    tu = sub.add_parser('tune', parents=[common], help='sweep grip force for one scenario')
+    pr.add_argument('--empty', type=int, help='override protocol.empty_per_battery '
+                                              '(0 = no E controls)')
+    tu =sub.add_parser('tune', parents=[common], help='sweep grip force for one scenario')
     tu.add_argument('--scenario', choices=('A', 'B'), required=True)
     tu.add_argument('--trials', type=int, default=10, help='trials per grip level')
     si = sub.add_parser('single', parents=[common], help='one trial')
@@ -821,6 +1085,8 @@ def main(argv=None) -> int:
     cfg = load_experiment_config(args.config)
     if args.seed is not None:
         cfg['randomization']['seed'] = args.seed
+    if args.variant is not None:
+        cfg['protocol']['variant'] = args.variant
 
     if args.mode == 'relabel':
         print_report(relabel_session(args.session, cfg))
@@ -837,14 +1103,15 @@ def main(argv=None) -> int:
     else:
         for kv in args.grip:
             scen, val = kv.split('=')
-            cfg['scenarios'][scen]['grip_force_n'] = float(val)
+            set_scenario_grip_force(cfg, scen, float(val))
         if args.mode == 'single':
             plan = [TrialSpec(0, 1, 1, args.scenario)]
             label = f'single{args.scenario}'
         else:
             pc = cfg['protocol']
+            empty = pc['empty_per_battery'] if args.empty is None else args.empty
             plan = generate_protocol_plan(args.batteries or pc['batteries'], pc['trials_per_battery'],
-                                          pc['empty_per_battery'], cfg['randomization']['seed'])
+                                          empty, cfg['randomization']['seed'])
             label = 'protocol'
 
     exp = Experiment(cfg, args.output_dir, label)
@@ -861,8 +1128,10 @@ def main(argv=None) -> int:
             detail = row['invalid_reason'] if not row['valid'] else (
                 f"{row['failure_mode']} t_drop={row['t_drop_s']:.2f}s" if row['outcome'] == 'fail'
                 else ('slipped' if row['slipped'] else ''))
+            if row.get('y_stable', '') != '':
+                detail += f" {'stable' if row['y_stable'] else 'unstable'}"
             print(f"[exp] {spec.index + 1:4d}/{len(plan)} batt {spec.battery:2d} {spec.scenario} "
-                  f"grip {row['grip_force_n']:.3f} N -> {row['outcome']:7s} {detail} "
+                  f"grip {row['grip_force_n']:.3f} {'rad' if gripper_type(cfg) == 'servo_claw' else 'N'} -> {row['outcome']:7s} {detail} "
                   f"({time.monotonic() - t0:.0f}s)", flush=True)
     except KeyboardInterrupt:
         print('\n[exp] interrupted - returning home')
